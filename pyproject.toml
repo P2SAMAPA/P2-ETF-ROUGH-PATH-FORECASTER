@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rough_path_forecaster"
+version = "1.0.0"
+description = "Signature kernel + Log-ODE ETF forecasting engine"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "P2SAMAPA"}
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "torch>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "gpytorch>=1.10",
+    "huggingface-hub>=0.20.0",
+    "pyarrow>=14.0.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.66.0",
+    "streamlit>=1.30.0",
+    "plotly>=5.18.0",
+    "statsmodels>=0.14.0",
+    "torchdiffeq>=0.2.0"
+]
+
+[project.scripts]
+train-fixed = "train_fixed:main"
+train-shrinking = "train_shrinking:main"
+predict = "predict:main"
+upload-to-hub = "upload_to_hub:main"
+
+[tool.setuptools.packages.find]
+include = ["rough_path_forecaster*"]
+exclude = ["tests*", "notebooks*"]
