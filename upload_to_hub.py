@@ -117,3 +117,66 @@ Uses signature kernel methods and Log-ODE for ETF return forecasting.
 - 20% (-)Max Drawdown
 
 ## Output Structure
+fi/
+├── fixed/
+│ ├── model.pkl
+│ ├── predictions.parquet
+│ ├── actuals.parquet
+│ └── metrics.json
+└── shrinking/
+├── model_window_*.pkl
+├── window_results.parquet
+├── consensus.parquet
+├── window_picks.parquet
+└── window_metrics.parquet
+
+equity/
+└── (same structure as fi/)
+
+## Last Updated
+
+{datetime.utcnow().isoformat()}
+"""
+            
+            readme_path = os.path.join(tmpdir, "README.md")
+            with open(readme_path, 'w') as f:
+                f.write(readme_content)
+            
+            # Upload using HfApi
+            api = HfApi()
+            
+            # Upload each file individually
+            uploaded_count = 0
+            for root, dirs, files in os.walk(tmpdir):
+                for file in files:
+                    local_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(local_path, tmpdir)
+                    
+                    try:
+                        api.upload_file(
+                            path_or_fileobj=local_path,
+                            path_in_repo=rel_path,
+                            repo_id=HF_RESULTS_REPO,
+                            repo_type="dataset",
+                            commit_message=f"Update {rel_path}"
+                        )
+                        uploaded_count += 1
+                        logger.info(f"Uploaded: {rel_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to upload {rel_path}: {e}")
+            
+            logger.info(f"Successfully uploaded {uploaded_count} files to {HF_RESULTS_REPO}")
+    
+    logger.info(f"Upload completed in {t.minutes:.2f} minutes")
+    
+    if is_ci:
+        GitHubActionsHelpers.set_output("upload_status", "success")
+        GitHubActionsHelpers.set_output("files_uploaded", str(uploaded_count))
+
+
+def main():
+    upload_results()
+
+
+if __name__ == "__main__":
+    main()
