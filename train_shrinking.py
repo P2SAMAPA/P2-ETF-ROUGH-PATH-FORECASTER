@@ -120,4 +120,57 @@ def main():
         os.makedirs(save_dir, exist_ok=True)
         
         # Compute consensus picks
-        consensus
+        consensus = compute_consensus_picks(result['windows'], module, SHRINKING_START_YEARS)
+        
+        # Save each window model
+        for start_year, model in result['models'].items():
+            model_path = os.path.join(save_dir, f"model_window_{start_year}.pkl")
+            with open(model_path, 'wb') as f:
+                pickle.dump(model, f)
+        
+        # Save window results
+        window_results_list = []
+        for w in result['windows']:
+            window_results_list.append({
+                'start_year': w['start_year'],
+                'end_year': w['end_year'],
+                'n_days': w['n_days']
+            })
+        
+        window_results_df = pd.DataFrame(window_results_list)
+        window_results_path = os.path.join(save_dir, "window_results.parquet")
+        ParquetWriter.write_window_results(window_results_df, window_results_path)
+        
+        # Save consensus
+        consensus_df = pd.DataFrame([{
+            'consensus_pick': consensus['consensus_pick'],
+            'consensus_conviction': consensus['consensus_conviction'],
+            'second_pick': consensus['second_pick'],
+            'third_pick': consensus['third_pick']
+        }])
+        consensus_path = os.path.join(save_dir, "consensus.parquet")
+        ParquetWriter.write_predictions(consensus_df, consensus_path)
+        
+        # Save window picks
+        window_picks_df = pd.DataFrame({
+            'start_year': SHRINKING_START_YEARS,
+            'pick': consensus['window_picks'],
+            'conviction': consensus['window_convictions']
+        })
+        window_picks_path = os.path.join(save_dir, "window_picks.parquet")
+        ParquetWriter.write_predictions(window_picks_df, window_picks_path)
+        
+        # Save metrics
+        if not consensus['window_metrics'].empty:
+            metrics_path = os.path.join(save_dir, "window_metrics.parquet")
+            ParquetWriter.write_predictions(consensus['window_metrics'], metrics_path)
+    
+    logger.info(f"Shrinking windows training completed in {t.minutes:.2f} minutes")
+    
+    if is_ci:
+        GitHubActionsHelpers.set_output("training_status", "success")
+        GitHubActionsHelpers.set_output("consensus_pick", consensus['consensus_pick'])
+
+
+if __name__ == "__main__":
+    main()
