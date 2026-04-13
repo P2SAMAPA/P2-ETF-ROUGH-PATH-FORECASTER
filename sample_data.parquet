@@ -1,0 +1,22 @@
+# generate_sample_data.py - Run this once to create sample_data.parquet
+import pandas as pd
+import numpy as np
+
+np.random.seed(42)
+dates = pd.date_range('2020-01-01', '2024-12-31', freq='D')
+n = len(dates)
+
+sample_data = pd.DataFrame({
+    'datetime': dates,
+    'SPY': np.random.randn(n).cumsum() / 100 + 1,
+    'AGG': np.random.randn(n).cumsum() / 200 + 1,
+    'TLT': np.random.randn(n).cumsum() / 150 + 1,
+    'GLD': np.random.randn(n).cumsum() / 120 + 1,
+    'VIX': 15 + np.random.randn(n) * 3,
+    'DXY': 100 + np.random.randn(n) * 2,
+    'T10Y2Y': 0.5 + np.random.randn(n) * 0.2,
+    'HY_SPREAD': 0.03 + np.random.randn(n) * 0.01,
+})
+
+sample_data.to_parquet('sample_data.parquet', index=False)
+print("Sample data created: sample_data.parquet")
