@@ -168,4 +168,13 @@ class RoughnessAnalyzer:
         return confidence_factor
     
     @staticmethod
-    def hurst_to_confidence(h
+    def hurst_to_confidence(hurst):
+        """
+        Convert Hurst exponent to confidence
+        H near 0.5 (random walk) = lower confidence
+        H near 1 (trending) = higher confidence
+        """
+        # Deviation from 0.5
+        deviation = abs(hurst - 0.5) * 2
+        confidence_factor = 0.5 + deviation * 0.5
+        return min(confidence_factor, 1.0)
