@@ -193,3 +193,139 @@ Uses signature kernel methods and Log-ODE for ETF return forecasting.
 - 20% (-)Max Drawdown
 
 ## Output Structure
+fi/
+├── fixed/
+│ ├── model.pkl # Trained model
+│ ├── predictions.parquet # Test set predictions
+│ ├── actuals.parquet # Test set actual returns
+│ └── metrics.json # Performance metrics
+└── shrinking/
+├── model_window_*.pkl # Per-window models
+├── window_results.parquet # Window metadata
+├── consensus.parquet # Consensus pick
+├── window_picks.parquet # Per-window picks
+└── window_metrics.parquet # Per-window performance
+
+equity/
+└── (same structure as fi/)
+
+metadata.json
+
+## Performance Metrics
+
+| Metric | Description |
+|--------|-------------|
+| annualized_return_pct | Annualized return percentage |
+| annualized_vol_pct | Annualized volatility percentage |
+| sharpe_ratio | Risk-adjusted return |
+| max_drawdown_pct | Maximum peak-to-trough decline |
+| hit_rate_pct | Percentage of positive days |
+| alpha_vs_benchmark_pct | Excess return over benchmark |
+
+## Last Updated
+
+{datetime.utcnow().isoformat()}
+
+## License
+
+MIT
+"""
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        readme_path = os.path.join(tmpdir, "README.md")
+        with open(readme_path, 'w') as f:
+            f.write(readme_content)
+        
+        api = HfApi()
+        try:
+            api.upload_file(
+                path_or_fileobj=readme_path,
+                path_in_repo="README.md",
+                repo_id=HF_RESULTS_REPO,
+                repo_type="dataset",
+                commit_message="Update README.md"
+            )
+            logger.info("Uploaded: README.md")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to upload README.md: {e}")
+            return False
+
+
+def upload_both_modules():
+    """Upload both FI and Equity modules"""
+    
+    fi_success = upload_module('fi')
+    equity_success = upload_module('equity')
+    
+    return fi_success and equity_success
+
+
+def upload_all():
+    """Upload everything: both modules + metadata + README"""
+    
+    logger.info("Starting full upload to HF dataset")
+    
+    with Timer() as t:
+        modules_success = upload_both_modules()
+        metadata_success = upload_metadata()
+        readme_success = upload_readme()
+    
+    total_success = modules_success and metadata_success and readme_success
+    
+    if total_success:
+        logger.info(f"Full upload completed in {t.minutes:.2f} minutes")
+    else:
+        logger.warning(f"Upload completed with errors in {t.minutes:.2f} minutes")
+    
+    return total_success
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Upload results to Hugging Face dataset")
+    parser.add_argument("--module", type=str, choices=['fi', 'equity', 'both'], 
+                        default='both', help="Module to upload (default: both)")
+    parser.add_argument("--mode", type=str, choices=['all', 'metadata', 'readme'], 
+                        default='all', help="Upload mode (default: all)")
+    args = parser.parse_args()
+    
+    is_ci = GitHubActionsHelpers.is_github_actions()
+    
+    # Check if HF token is available
+    hf_token = os.environ.get('HF_TOKEN')
+    if not hf_token:
+        logger.warning("HF_TOKEN not found in environment. Skipping upload.")
+        if is_ci:
+            GitHubActionsHelpers.set_output("upload_status", "skipped_no_token")
+        return
+    
+    # Execute based on arguments
+    if args.mode == 'metadata':
+        success = upload_metadata()
+    elif args.mode == 'readme':
+        success = upload_readme()
+    elif args.module == 'fi':
+        success = upload_module('fi')
+        upload_metadata()
+        upload_readme()
+    elif args.module == 'equity':
+        success = upload_module('equity')
+        upload_metadata()
+        upload_readme()
+    else:  # both + all
+        success = upload_all()
+    
+    if is_ci:
+        GitHubActionsHelpers.set_output("upload_status", "success" if success else "failed")
+    
+    if not success:
+        logger.error("Upload failed")
+        if is_ci:
+            GitHubActionsHelpers.set_failed("Upload failed")
+        exit(1)
+    
+    logger.info("Upload completed successfully")
+
+
+if __name__ == "__main__":
+    main()
