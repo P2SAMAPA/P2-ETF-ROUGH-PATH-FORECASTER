@@ -239,4 +239,22 @@ class AdaptiveDepthSelector:
         best_depth = 3  # default
         best_score = -np.inf
         
-        for depth in self
+        for depth in self.depths:
+            computer = SignatureComputer(depth=depth)
+            kernel = NeumannSignatureKernel(depth=depth)
+            
+            # Compute kernel matrix on training portion
+            train_paths = X_paths[:-val_size]
+            K_train = kernel.kernel_matrix(train_paths)
+            
+            # Simple score: kernel alignment with target
+            if len(train_paths) > 1:
+                score = np.trace(K_train) / len(train_paths)
+            else:
+                score = 0
+            
+            if score > best_score:
+                best_score = score
+                best_depth = depth
+        
+        return best_depth
