@@ -53,20 +53,20 @@ class ETFSelector:
     def select_picks(self, predicted_returns, predicted_uncertainties=None, date=None):
         """
         Select top N ETFs as picks
+        Returns all top N picks regardless of conviction threshold
         """
         scores = self.compute_net_scores(predicted_returns, predicted_uncertainties)
         
         picks = []
         for i in range(min(self.top_n, len(scores))):
             row = scores.iloc[i]
-            if row['conviction'] >= self.min_conviction or i == 0:  # Always include top pick
-                picks.append({
-                    'rank': i + 1,
-                    'ticker': row['ticker'],
-                    'predicted_return': row['predicted_return'],
-                    'net_return': row['net_return'],
-                    'conviction': row['conviction']
-                })
+            picks.append({
+                'rank': i + 1,
+                'ticker': row['ticker'],
+                'predicted_return': row['predicted_return'],
+                'net_return': row['net_return'],
+                'conviction': row['conviction']
+            })
         
         return picks
     
