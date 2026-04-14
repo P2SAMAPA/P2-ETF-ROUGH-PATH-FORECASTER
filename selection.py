@@ -145,17 +145,28 @@ class MacroRegimeContext:
         self.macro_cols = macro_cols
     
     def get_regime(self, macro_values):
-        """Determine current regime based on macro values"""
+        """
+        Determine current regime based on macro values
+        
+        Rules:
+        - Risk-Off: VIX > 20 OR HY spread > 0.04
+        - Crisis: VIX > 30 AND HY spread > 0.06
+        - Transitional: T10Y2Y < 0 (inverted yield curve)
+        - Risk-On: everything else
+        """
         vix = macro_values.get('VIX', 15)
         hy_spread = macro_values.get('HY_SPREAD', 0.03)
         t10y2y = macro_values.get('T10Y2Y', 0.5)
         
-        if vix > 30 and hy_spread > 0.06:
-            regime = 3  # Crisis
-        elif vix > 22 or hy_spread > 0.05:
+        # Risk-Off: VIX > 20 OR HY spread > 0.04
+        if vix > 20 or hy_spread > 0.04:
             regime = 1  # Risk-Off
+        # Crisis: VIX > 30 AND HY spread > 0.06 (more severe, overrides Risk-Off)
+        elif vix > 30 and hy_spread > 0.06:
+            regime = 3  # Crisis
+        # Transitional: inverted yield curve (T10Y2Y < 0)
         elif t10y2y < 0:
-            regime = 2  # Transitional (inverted curve)
+            regime = 2  # Transitional
         else:
             regime = 0  # Risk-On
         
@@ -175,13 +186,22 @@ class RoughnessAnalyzer:
     
     @staticmethod
     def roughness_to_confidence(roughness):
-        """Convert roughness to confidence adjustment"""
+        """
+        Convert roughness to confidence adjustment
+        Lower roughness = more predictable = higher confidence
+        """
+        # Roughness typically in [0, 1]
         confidence_factor = 1.0 / (1.0 + roughness * 2)
         return confidence_factor
     
     @staticmethod
     def hurst_to_confidence(hurst):
-        """Convert Hurst exponent to confidence"""
+        """
+        Convert Hurst exponent to confidence
+        H near 0.5 (random walk) = lower confidence
+        H near 1 (trending) = higher confidence
+        """
+        # Deviation from 0.5
         deviation = abs(hurst - 0.5) * 2
         confidence_factor = 0.5 + deviation * 0.5
         return min(confidence_factor, 1.0)
