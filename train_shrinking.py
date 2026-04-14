@@ -10,6 +10,7 @@ import os
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from collections import Counter
 
 from constants import SHRINKING_START_YEARS, SHRINKING_END_YEAR
 from module_fi import FIModule
@@ -36,27 +37,46 @@ def compute_consensus_picks(window_results, module, start_years):
         
         # Get last prediction from this window
         if len(result['predictions']) > 0:
-            last_pred = result['predictions'][-1]
+            last_pred = result['predictions']
             if len(last_pred.shape) > 1:
-                last_pred = last_pred.mean(axis=0)
+                last_pred = last_pred[-1] if len(last_pred) > 0 else last_pred.mean(axis=0)
+            else:
+                last_pred = last_pred[-1] if len(last_pred) > 0 else last_pred
+            
+            # Ensure 1D
+            if isinstance(last_pred, (int, float)):
+                last_pred = np.ones(len(tickers)) * last_pred
+            elif len(last_pred.shape) > 1:
+                last_pred = last_pred.flatten()
             
             # Get top pick
             selector = ETFSelector(tickers, benchmark)
-            scores = selector.compute_net_scores(last_pred)
+            scores = selector.compute_net_scores(last_pred[:len(tickers)])
             top_pick = scores.iloc[0]['ticker']
             top_conviction = scores.iloc[0]['conviction']
             
             window_picks.append(top_pick)
             window_convictions.append(top_conviction)
             
-            # Compute window metrics
+            # Compute window metrics from actuals
             actuals = result['actuals']
             if len(actuals) > 0:
-                ann_return = actuals.mean() * 252
-                ann_vol = actuals.std() * np.sqrt(252)
+                # Convert to pandas Series for calculations
+                if isinstance(actuals, np.ndarray):
+                    if len(actuals.shape) > 1:
+                        # Use mean across ETFs for metrics
+                        actuals_series = pd.Series(actuals.mean(axis=1))
+                    else:
+                        actuals_series = pd.Series(actuals)
+                else:
+                    actuals_series = pd.Series(actuals)
+                
+                ann_return = actuals_series.mean() * 252
+                ann_vol = actuals_series.std() * np.sqrt(252)
                 sharpe = ann_return / ann_vol if ann_vol > 0 else 0
                 
-                cumulative = (1 + actuals).cumprod()
+                # Max drawdown calculation using pandas
+                cumulative = (1 + actuals_series).cumprod()
                 running_max = cumulative.expanding().max()
                 drawdown = (cumulative - running_max) / running_max
                 max_dd = drawdown.min()
@@ -66,11 +86,10 @@ def compute_consensus_picks(window_results, module, start_years):
                     'ann_return_pct': ann_return * 100,
                     'ann_vol_pct': ann_vol * 100,
                     'sharpe': sharpe,
-                    'max_drawdown_pct': max_dd * 100
+                    'max_drawdown_pct': max_dd * 100 if not np.isnan(max_dd) else 0
                 })
     
     # Count picks for consensus
-    from collections import Counter
     pick_counts = Counter(window_picks)
     
     # Weighted consensus by conviction
@@ -83,7 +102,7 @@ def compute_consensus_picks(window_results, module, start_years):
     
     consensus = {
         'consensus_pick': sorted_picks[0][0] if sorted_picks else None,
-        'consensus_conviction': sorted_picks[0][1] / len(window_picks) if sorted_picks else 0,
+        'consensus_conviction': sorted_picks[0][1] / len(window_picks) if sorted_picks and len(window_picks) > 0 else 0,
         'second_pick': sorted_picks[1][0] if len(sorted_picks) > 1 else None,
         'third_pick': sorted_picks[2][0] if len(sorted_picks) > 2 else None,
         'window_picks': window_picks,
@@ -106,7 +125,10 @@ def main():
     
     is_ci = GitHubActionsHelpers.is_github_actions()
     
-    with Timer() as t:
+    timer = Timer()
+    timer.__enter__()
+    
+    try:
         if args.module == 'fi':
             module = FIModule()
             result = module.train_shrinking(SHRINKING_START_YEARS, SHRINKING_END_YEAR)
@@ -127,6 +149,7 @@ def main():
             model_path = os.path.join(save_dir, f"model_window_{start_year}.pkl")
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
+            logger.info(f"Saved model for window {start_year}")
         
         # Save window results
         window_results_list = []
@@ -153,7 +176,7 @@ def main():
         
         # Save window picks
         window_picks_df = pd.DataFrame({
-            'start_year': SHRINKING_START_YEARS,
+            'start_year': SHRINKING_START_YEARS[:len(consensus['window_picks'])],
             'pick': consensus['window_picks'],
             'conviction': consensus['window_convictions']
         })
@@ -164,12 +187,22 @@ def main():
         if not consensus['window_metrics'].empty:
             metrics_path = os.path.join(save_dir, "window_metrics.parquet")
             ParquetWriter.write_predictions(consensus['window_metrics'], metrics_path)
+        
+        timer.__exit__(None, None, None)
+        logger.info(f"Shrinking windows training completed in {timer.minutes:.2f} minutes")
+        
+        if is_ci:
+            GitHubActionsHelpers.set_output("training_status", "success")
+            GitHubActionsHelpers.set_output("consensus_pick", consensus['consensus_pick'])
     
-    logger.info(f"Shrinking windows training completed in {t.minutes:.2f} minutes")
-    
-    if is_ci:
-        GitHubActionsHelpers.set_output("training_status", "success")
-        GitHubActionsHelpers.set_output("consensus_pick", consensus['consensus_pick'])
+    except Exception as e:
+        logger.error(f"Training failed: {e}")
+        import traceback
+        traceback.print_exc()
+        timer.__exit__(None, None, None)
+        if is_ci:
+            GitHubActionsHelpers.set_failed(f"Training failed: {e}")
+        raise
 
 
 if __name__ == "__main__":
