@@ -1,6 +1,7 @@
 """
 Data pipeline for ROUGH-PATH-FORECASTER
 Loads master.parquet from HF, processes ETF and macro data
+Data format: {TICKER}_Open, {TICKER}_High, {TICKER}_Low, {TICKER}_Close, {TICKER}_Volume
 """
 
 import numpy as np
@@ -49,8 +50,8 @@ class DataPipeline:
         
         self.raw_data = pd.read_parquet(local_path)
         
-        # Print available columns for debugging
-        print(f"Available columns: {list(self.raw_data.columns)[:20]}...")
+        # Print first few columns for debugging
+        print(f"Columns in data: {list(self.raw_data.columns)[:10]}...")
         
         # Ensure datetime index
         if 'datetime' in self.raw_data.columns:
@@ -64,62 +65,49 @@ class DataPipeline:
         return self
     
     def extract_etf_returns(self):
-        """Extract ETF returns for all tickers in universe"""
+        """Extract ETF returns from OHLCV data using Close prices"""
         returns_dict = {}
         
         for ticker in self.tickers:
-            # Try different column naming conventions
-            col_candidates = [
-                ticker,  # direct ticker
-                f"{ticker}_close",  # with _close suffix
-                f"{ticker}_adj_close",  # with _adj_close suffix
-                f"{ticker}_return",  # with _return suffix
-                ticker.lower(),  # lowercase
-                ticker.upper(),  # uppercase
-                f"{ticker}_price",  # with _price suffix
-                ticker.replace('.', '_'),  # replace dots
-            ]
+            # Look for Close price column
+            close_col = f"{ticker}_Close"
             
-            found = False
-            for col in col_candidates:
-                if col in self.raw_data.columns:
-                    returns_dict[ticker] = self.raw_data[col]
-                    found = True
-                    print(f"Found {ticker} -> column '{col}'")
-                    break
-            
-            if not found:
-                # Try to find any column containing the ticker
-                matching_cols = [col for col in self.raw_data.columns if ticker.lower() in col.lower()]
-                if matching_cols:
-                    returns_dict[ticker] = self.raw_data[matching_cols[0]]
-                    print(f"Found {ticker} -> column '{matching_cols[0]}'")
-                    found = True
-            
-            if not found:
-                print(f"Warning: {ticker} not found in data. Using zeros.")
-                returns_dict[ticker] = pd.Series(0, index=self.raw_data.index)
+            if close_col in self.raw_data.columns:
+                prices = self.raw_data[close_col]
+                # Calculate returns
+                returns = prices.pct_change()
+                returns_dict[ticker] = returns
+                print(f"Found {ticker} -> {close_col}")
+            else:
+                # Try alternative naming
+                alt_cols = [f"{ticker}_close", f"{ticker}_adj_close", f"{ticker}_price"]
+                found = False
+                for alt in alt_cols:
+                    if alt in self.raw_data.columns:
+                        prices = self.raw_data[alt]
+                        returns = prices.pct_change()
+                        returns_dict[ticker] = returns
+                        print(f"Found {ticker} -> {alt}")
+                        found = True
+                        break
+                
+                if not found:
+                    print(f"Warning: {ticker}_Close not found in data. Using zeros.")
+                    returns_dict[ticker] = pd.Series(0, index=self.raw_data.index)
         
         # Create DataFrame
         etf_returns = pd.DataFrame(returns_dict)
-        
-        # Convert to returns if these are prices
-        for col in etf_returns.columns:
-            if etf_returns[col].abs().max() > 10:  # Likely prices, not returns
-                etf_returns[col] = etf_returns[col].pct_change()
-        
         etf_returns = etf_returns.dropna()
         
         return etf_returns
     
     def extract_macro_data(self):
-        """Extract macro columns"""
+        """Extract macro columns (already in correct format)"""
         available_macro = [col for col in self.macro_cols if col in self.raw_data.columns]
         
         if not available_macro:
             print(f"Warning: None of macro columns {self.macro_cols} found in data")
-            print(f"Available columns: {list(self.raw_data.columns)}")
-            # Return empty DataFrame
+            print(f"Available columns sample: {list(self.raw_data.columns)[:20]}")
             return pd.DataFrame(index=self.raw_data.index)
         
         macro_data = self.raw_data[available_macro].copy()
@@ -145,6 +133,9 @@ class DataPipeline:
         if macro_data.empty or len(macro_data) < 2:
             # Return dummy path
             return np.zeros((10, len(self.macro_cols) + 1))
+        
+        # Handle NaN values
+        macro_data = macro_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
         
         # Standardize macro data
         macro_scaled = self.scaler.fit_transform(macro_data)
@@ -180,6 +171,10 @@ class DataPipeline:
         etf_returns = self.extract_etf_returns()
         macro_data = self.extract_macro_data()
         
+        if macro_data.empty:
+            print("Error: No macro data available")
+            return None
+        
         etf_aligned, macro_aligned = self.align_data(etf_returns, macro_data)
         
         # Create path augmentations
@@ -207,35 +202,39 @@ class DataPipeline:
         # Filter to window period
         window_data = self.raw_data.loc[f"{start_year}-01-01":f"{end_year}-12-31"]
         
-        # Extract ETF returns
+        # Extract ETF returns from Close prices
         etf_returns = {}
         for ticker in self.tickers:
-            col_candidates = [ticker, f"{ticker}_close", f"{ticker}_adj_close", f"{ticker}_return"]
-            found = False
-            for col in col_candidates:
-                if col in window_data.columns:
-                    etf_returns[ticker] = window_data[col]
-                    found = True
-                    break
-            if not found:
-                matching_cols = [col for col in window_data.columns if ticker.lower() in col.lower()]
-                if matching_cols:
-                    etf_returns[ticker] = window_data[matching_cols[0]]
-                else:
+            close_col = f"{ticker}_Close"
+            if close_col in window_data.columns:
+                prices = window_data[close_col]
+                returns = prices.pct_change()
+                etf_returns[ticker] = returns
+            else:
+                # Try alternative
+                alt_cols = [f"{ticker}_close", f"{ticker}_adj_close"]
+                found = False
+                for alt in alt_cols:
+                    if alt in window_data.columns:
+                        prices = window_data[alt]
+                        returns = prices.pct_change()
+                        etf_returns[ticker] = returns
+                        found = True
+                        break
+                if not found:
                     etf_returns[ticker] = pd.Series(0, index=window_data.index)
         
         etf_returns_df = pd.DataFrame(etf_returns)
-        
-        # Convert to returns if needed
-        for col in etf_returns_df.columns:
-            if etf_returns_df[col].abs().max() > 10:
-                etf_returns_df[col] = etf_returns_df[col].pct_change()
-        
         etf_returns_df = etf_returns_df.dropna()
         
         # Extract macro
         available_macro = [col for col in self.macro_cols if col in window_data.columns]
-        macro_df = window_data[available_macro].dropna()
+        macro_df = window_data[available_macro].copy()
+        macro_df = macro_df.dropna()
+        
+        if macro_df.empty:
+            print(f"Warning: No macro data for window {start_year}-{end_year}")
+            return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
         
         # Align
         common_dates = etf_returns_df.index.intersection(macro_df.index)
@@ -244,6 +243,9 @@ class DataPipeline:
         
         if len(etf_aligned) < 10:
             print(f"Warning: Only {len(etf_aligned)} samples for window {start_year}-{end_year}")
+        
+        # Handle NaN in macro
+        macro_aligned = macro_aligned.fillna(method='ffill').fillna(method='bfill').fillna(0)
         
         X = self.create_path_augmentation(macro_aligned)
         y = etf_aligned.values
@@ -259,7 +261,8 @@ def get_latest_macro_pipeline():
     latest = {}
     for col in MACRO_COLS:
         if col in pipeline.raw_data.columns:
-            latest[col] = float(pipeline.raw_data[col].iloc[-1])
+            val = pipeline.raw_data[col].iloc[-1]
+            latest[col] = float(val) if not pd.isna(val) else 0.0
         else:
             latest[col] = 0.0
     
