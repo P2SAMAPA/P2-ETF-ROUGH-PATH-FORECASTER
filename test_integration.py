@@ -27,7 +27,6 @@ class TestDataPipelineIntegration(unittest.TestCase):
 class TestTrainPredictIntegration(unittest.TestCase):
     def test_train_and_predict_small(self):
         """Test training and prediction on synthetic data"""
-        from signature_core import SignatureComputer
         from models import EnsembleForecaster
         
         # Generate synthetic data
@@ -47,7 +46,13 @@ class TestTrainPredictIntegration(unittest.TestCase):
         test_paths = [np.random.randn(path_length, n_features) for _ in range(5)]
         predictions = model.predict(test_paths)
         
+        # Check predictions shape
         self.assertEqual(len(predictions), 5)
+        self.assertIsInstance(predictions, np.ndarray)
+        
+        # Test single prediction
+        single_pred = model.predict_single(test_paths[0])
+        self.assertIsInstance(single_pred, float)
 
 
 class TestOutputGeneration(unittest.TestCase):
@@ -73,9 +78,10 @@ class TestOutputGeneration(unittest.TestCase):
             lookback_days=30
         )
         
-        self.assertEqual(signal['etf_pick'], 'HYG')  # Highest return
+        self.assertEqual(signal['etf_pick'], 'HYG')
         self.assertIn('conviction_percentage', signal)
         self.assertIn('macro_pills', signal)
+        self.assertEqual(len(signal['macro_pills']), 5)
 
 
 class TestCacheSystem(unittest.TestCase):
