@@ -134,8 +134,8 @@ class DataPipeline:
             # Return dummy path
             return np.zeros((10, len(self.macro_cols) + 1))
         
-        # Handle NaN values
-        macro_data = macro_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        # Handle NaN values - use ffill/bfill (no method parameter)
+        macro_data = macro_data.ffill().bfill().fillna(0)
         
         # Standardize macro data
         macro_scaled = self.scaler.fit_transform(macro_data)
@@ -222,6 +222,7 @@ class DataPipeline:
                         found = True
                         break
                 if not found:
+                    print(f"Warning: {ticker}_Close not found in window data. Using zeros.")
                     etf_returns[ticker] = pd.Series(0, index=window_data.index)
         
         etf_returns_df = pd.DataFrame(etf_returns)
@@ -244,8 +245,8 @@ class DataPipeline:
         if len(etf_aligned) < 10:
             print(f"Warning: Only {len(etf_aligned)} samples for window {start_year}-{end_year}")
         
-        # Handle NaN in macro
-        macro_aligned = macro_aligned.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        # Handle NaN in macro - use ffill/bfill (no method parameter)
+        macro_aligned = macro_aligned.ffill().bfill().fillna(0)
         
         X = self.create_path_augmentation(macro_aligned)
         y = etf_aligned.values
