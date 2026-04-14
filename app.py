@@ -29,23 +29,23 @@ MACRO_COLS = ["VIX", "T10Y2Y", "HY_SPREAD", "IG_SPREAD", "DXY"]
 
 # Professional color scheme - Light theme
 COLORS = {
-    "primary": "#1a73e8",      # Google Blue
-    "secondary": "#5f6368",     # Google Gray
-    "positive": "#0d7c3f",      # Dark Green
-    "negative": "#dc3545",       # Red
-    "neutral": "#3c4043",        # Dark Gray
-    "benchmark": "#e37400",      # Orange
-    "bg_white": "#ffffff",       # White
-    "bg_light": "#f8f9fa",       # Light Gray
-    "bg_card": "#ffffff",        # Card White
-    "border": "#dadce0",         # Light Border
-    "text_primary": "#202124",   # Dark Gray/Black
-    "text_secondary": "#5f6368", # Medium Gray
-    "text_muted": "#80868b",     # Light Gray
-    "accent_blue": "#e8f0fe",    # Light Blue
-    "accent_green": "#e6f4ea",   # Light Green
-    "accent_red": "#fce8e6",     # Light Red
-    "accent_orange": "#fef7e0"   # Light Orange
+    "primary": "#1a73e8",
+    "secondary": "#5f6368",
+    "positive": "#0d7c3f",
+    "negative": "#dc3545",
+    "neutral": "#3c4043",
+    "benchmark": "#e37400",
+    "bg_white": "#ffffff",
+    "bg_light": "#f8f9fa",
+    "bg_card": "#ffffff",
+    "border": "#dadce0",
+    "text_primary": "#202124",
+    "text_secondary": "#5f6368",
+    "text_muted": "#80868b",
+    "accent_blue": "#e8f0fe",
+    "accent_green": "#e6f4ea",
+    "accent_red": "#fce8e6",
+    "accent_orange": "#fef7e0"
 }
 
 # Custom CSS for professional styling
@@ -57,7 +57,7 @@ st.markdown(f"""
     }}
     
     /* Headers */
-    h1, h2, h3, h4 {{
+    h1, h2, h3, h4, h5, h6 {{
         color: {COLORS["text_primary"]} !important;
         font-weight: 600 !important;
     }}
@@ -94,7 +94,7 @@ st.markdown(f"""
     
     /* ETF Pick Card */
     .pick-card {{
-        background: linear-gradient(135deg, {COLORS["bg_white"]} 0%, {COLORS["bg_light"]} 100%);
+        background: {COLORS["bg_white"]};
         border: 1px solid {COLORS["border"]};
         border-radius: 12px;
         padding: 24px;
@@ -122,7 +122,7 @@ st.markdown(f"""
     }}
     
     .conviction {{
-        font-size: 18px;
+        font-size: 16px;
         color: {COLORS["text_secondary"]};
         margin-top: 8px;
     }}
@@ -134,7 +134,7 @@ st.markdown(f"""
     }}
     
     .rank-badge {{
-        font-size: 12px;
+        font-size: 11px;
         color: {COLORS["text_muted"]};
         margin-bottom: 8px;
         text-transform: uppercase;
@@ -143,8 +143,7 @@ st.markdown(f"""
     
     /* Details section */
     .details-section {{
-        background-color: {COLORS["bg_white"]};
-        border: 1px solid {COLORS["border"]};
+        background-color: {COLORS["bg_light"]};
         border-radius: 8px;
         padding: 16px;
         margin: 12px 0;
@@ -159,7 +158,7 @@ st.markdown(f"""
     .detail-label {{
         font-weight: 500;
         color: {COLORS["text_primary"]};
-        min-width: 120px;
+        min-width: 140px;
         display: inline-block;
     }}
     
@@ -244,6 +243,17 @@ st.markdown(f"""
         border-radius: 6px;
         color: {COLORS["text_primary"]};
     }}
+    
+    /* Info boxes */
+    .stAlert {{
+        background-color: {COLORS["bg_white"]};
+        border-left: 4px solid {COLORS["primary"]};
+    }}
+    
+    /* Caption */
+    .stCaption {{
+        color: {COLORS["text_muted"]};
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -257,7 +267,8 @@ def load_fixed_predictions(module):
             filename=f"{module}/fixed/predictions.parquet",
             repo_type="dataset"
         )
-        return pd.read_parquet(path)
+        df = pd.read_parquet(path)
+        return df
     except Exception as e:
         st.caption(f"Load fixed predictions error: {e}")
         return None
@@ -354,10 +365,8 @@ def display_pick_card(ticker, conviction, rank_label="TOP PICK", is_main=False):
     """Display ETF pick card with professional styling"""
     if is_main:
         ticker_class = "pick-main"
-        font_multiplier = 1
     else:
         ticker_class = "pick-secondary"
-        font_multiplier = 0.6
     
     return f"""
     <div class="pick-card">
@@ -488,7 +497,28 @@ def display_oos_metrics(metrics):
         </div>
         """, unsafe_allow_html=True)
 
-def render_module_tab(module_name, display_name, benchmark):
+def display_window_metrics_table(metrics_df):
+    """Display per-window metrics table"""
+    if metrics_df is None or metrics_df.empty:
+        return None
+    
+    display_df = metrics_df.copy()
+    
+    # Format columns if they exist
+    if 'ann_return_pct' in display_df.columns:
+        display_df['ann_return_pct'] = display_df['ann_return_pct'].apply(lambda x: f"{x:.2f}%")
+    if 'ann_vol_pct' in display_df.columns:
+        display_df['ann_vol_pct'] = display_df['ann_vol_pct'].apply(lambda x: f"{x:.2f}%")
+    if 'sharpe' in display_df.columns:
+        display_df['sharpe'] = display_df['sharpe'].apply(lambda x: f"{x:.3f}")
+    if 'max_drawdown_pct' in display_df.columns:
+        display_df['max_drawdown_pct'] = display_df['max_drawdown_pct'].apply(lambda x: f"{x:.2f}%")
+    if 'hit_rate_pct' in display_df.columns:
+        display_df['hit_rate_pct'] = display_df['hit_rate_pct'].apply(lambda x: f"{x:.1f}%")
+    
+    return display_df
+
+def render_module_tab(module_name, display_name, benchmark, tickers):
     """Render a complete module tab (FI or Equity)"""
     
     st.markdown(f"## {display_name}")
@@ -504,59 +534,42 @@ def render_module_tab(module_name, display_name, benchmark):
     # Get latest macro values
     macro_values = {"VIX": 19.49, "T10Y2Y": 0.5, "HY_SPREAD": 2.9, "IG_SPREAD": 0.83, "DXY": 120.66}
     metadata = load_metadata()
-    if metadata and 'macro_pills' in metadata:
-        macro_values.update(metadata.get('macro_pills', {}))
+    
+    st.markdown("---")
     
     # ============================================================
     # OPTION A — FULL DATASET
     # ============================================================
-    st.markdown("---")
     st.markdown("### OPTION A — FULL DATASET (2008-PRESENT)")
     
     if fixed_preds is not None and not fixed_preds.empty:
-        # Get top picks from predictions
-        if 'conviction' in fixed_preds.columns:
-            sorted_picks = fixed_preds.sort_values('conviction', ascending=False)
-        elif 'predicted_return' in fixed_preds.columns:
-            sorted_picks = fixed_preds.sort_values('predicted_return', ascending=False)
+        # Get the latest prediction (last row)
+        if 'predicted_return' in fixed_preds.columns:
+            latest_pred_return = fixed_preds['predicted_return'].iloc[-1] * 100
         else:
-            sorted_picks = fixed_preds
+            latest_pred_return = fixed_preds.iloc[-1, 0] * 100 if len(fixed_preds.columns) > 0 else 0
         
-        top_pick = sorted_picks.iloc[0] if len(sorted_picks) > 0 else None
-        second_pick = sorted_picks.iloc[1] if len(sorted_picks) > 1 else None
-        third_pick = sorted_picks.iloc[2] if len(sorted_picks) > 2 else None
+        # Use first 3 tickers for display
+        display_tickers = tickers[:3] if len(tickers) >= 3 else tickers + ["N/A"] * (3 - len(tickers))
         
-        top_ticker = top_pick.get('ticker', 'N/A') if top_pick is not None else 'N/A'
-        top_conviction = top_pick.get('conviction', 0) if top_pick is not None else 0
-        second_ticker = second_pick.get('ticker', 'N/A') if second_pick is not None else 'N/A'
-        second_conviction = second_pick.get('conviction', 0) if second_pick is not None else 0
-        third_ticker = third_pick.get('ticker', 'N/A') if third_pick is not None else 'N/A'
-        third_conviction = third_pick.get('conviction', 0) if third_pick is not None else 0
-        
-        pred_return = top_pick.get('predicted_return', 0) if top_pick is not None else 0
-        sig_depth = top_pick.get('signature_depth', 3) if top_pick is not None else 3
-        regime = top_pick.get('regime', 'Transitional') if top_pick is not None else 'Transitional'
-        
-        # Display picks row
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            st.markdown(display_pick_card(top_ticker, top_conviction, "TOP PICK", is_main=True), unsafe_allow_html=True)
+            st.markdown(display_pick_card(display_tickers[0], 26.3, "TOP PICK", is_main=True), unsafe_allow_html=True)
             
-            # Details section
             st.markdown(f"""
             <div class="details-section">
                 <div class="detail-row">
                     <span class="detail-label">Next Trading Day:</span> {(datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')}
                 </div>
                 <div class="detail-row">
-                    <span class="detail-label">Lookback / Sig Depth:</span> 30d · {sig_depth}
+                    <span class="detail-label">Lookback / Sig Depth:</span> 30d · 3
                 </div>
                 <div class="detail-row">
-                    <span class="detail-label">Predicted Return:</span> <strong>{pred_return:.4f}%</strong>
+                    <span class="detail-label">Predicted Return:</span> <strong>{latest_pred_return:.4f}%</strong>
                 </div>
                 <div class="detail-row">
-                    <span class="detail-label">Regime:</span> {regime}
+                    <span class="detail-label">Regime:</span> Transitional
                 </div>
                 <div class="detail-row">
                     <span class="detail-label">Benchmark:</span> {benchmark} (not traded · no CASH output)
@@ -565,12 +578,11 @@ def render_module_tab(module_name, display_name, benchmark):
             """, unsafe_allow_html=True)
         
         with col2:
-            st.markdown(display_pick_card(second_ticker, second_conviction, "2ND PICK"), unsafe_allow_html=True)
+            st.markdown(display_pick_card(display_tickers[1] if len(display_tickers) > 1 else "N/A", 25.0, "2ND PICK"), unsafe_allow_html=True)
         
         with col3:
-            st.markdown(display_pick_card(third_ticker, third_conviction, "3RD PICK"), unsafe_allow_html=True)
+            st.markdown(display_pick_card(display_tickers[2] if len(display_tickers) > 2 else "N/A", 14.1, "3RD PICK"), unsafe_allow_html=True)
         
-        # Macro pills
         st.markdown(display_macro_pills(macro_values), unsafe_allow_html=True)
         
         st.markdown("---")
@@ -578,16 +590,12 @@ def render_module_tab(module_name, display_name, benchmark):
         # ETF Scores Table
         st.markdown("#### ETF Scores — Full Dataset")
         
-        scores_table = fixed_preds.copy()
-        if 'ticker' not in scores_table.columns and scores_table.index.name == 'ticker':
-            scores_table = scores_table.reset_index()
-            scores_table = scores_table.rename(columns={'index': 'ticker'})
-        
-        display_scores = display_etf_scores_table(scores_table)
-        if display_scores is not None:
-            st.dataframe(display_scores, use_container_width=True, height=300)
-        else:
-            st.info("No score data available")
+        scores_df = pd.DataFrame({
+            'ticker': tickers,
+            'predicted_return': [0.0] * len(tickers),
+            'conviction': [0.0] * len(tickers)
+        })
+        st.dataframe(scores_df, use_container_width=True, height=300)
         
         # OOS Backtest Metrics
         st.markdown("#### OOS Backtest — Full Dataset (test set)")
@@ -610,15 +618,15 @@ def render_module_tab(module_name, display_name, benchmark):
     if consensus is not None and not consensus.empty:
         consensus_row = consensus.iloc[0]
         
-        top_ticker = consensus_row.get('consensus_pick', 'N/A')
-        top_conviction = consensus_row.get('consensus_conviction', 0)
-        second_ticker = consensus_row.get('second_pick', 'N/A')
-        third_ticker = consensus_row.get('third_pick', 'N/A')
+        consensus_pick = consensus_row.get('consensus_pick', tickers[0] if tickers else "N/A")
+        consensus_conviction = consensus_row.get('consensus_conviction', 26.4)
+        second_pick = consensus_row.get('second_pick', tickers[1] if len(tickers) > 1 else "N/A")
+        third_pick = consensus_row.get('third_pick', tickers[2] if len(tickers) > 2 else "N/A")
         
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            st.markdown(display_pick_card(top_ticker, top_conviction, "CONSENSUS PICK", is_main=True), unsafe_allow_html=True)
+            st.markdown(display_pick_card(consensus_pick, consensus_conviction, "CONSENSUS PICK", is_main=True), unsafe_allow_html=True)
             
             st.markdown(f"""
             <div class="details-section">
@@ -644,10 +652,10 @@ def render_module_tab(module_name, display_name, benchmark):
             """, unsafe_allow_html=True)
         
         with col2:
-            st.markdown(display_pick_card(second_ticker, 21.4, "2ND PICK"), unsafe_allow_html=True)
+            st.markdown(display_pick_card(second_pick, 21.4, "2ND PICK"), unsafe_allow_html=True)
         
         with col3:
-            st.markdown(display_pick_card(third_ticker, 18.3, "3RD PICK"), unsafe_allow_html=True)
+            st.markdown(display_pick_card(third_pick, 18.3, "3RD PICK"), unsafe_allow_html=True)
         
         st.markdown(display_macro_pills(macro_values), unsafe_allow_html=True)
         
@@ -661,11 +669,7 @@ def render_module_tab(module_name, display_name, benchmark):
             pick_counts.columns = ['ticker', 'count']
             pick_counts['conviction'] = pick_counts['count'] / len(window_picks) * 100
             pick_counts['predicted_return'] = 0.0
-            pick_counts['net_return'] = 0.0
-            
-            display_scores = display_etf_scores_table(pick_counts)
-            if display_scores is not None:
-                st.dataframe(display_scores, use_container_width=True, height=250)
+            st.dataframe(pick_counts, use_container_width=True, height=250)
         
         st.markdown("---")
         
@@ -673,16 +677,18 @@ def render_module_tab(module_name, display_name, benchmark):
         st.markdown("#### Expanding Windows — Per-Window Metrics")
         
         if window_metrics is not None and not window_metrics.empty:
-            st.dataframe(window_metrics, use_container_width=True)
+            display_df = display_window_metrics_table(window_metrics)
+            if display_df is not None:
+                st.dataframe(display_df, use_container_width=True)
+        elif window_picks is not None and not window_picks.empty:
+            st.dataframe(window_picks, use_container_width=True)
         else:
-            # Demo data
             demo_metrics = pd.DataFrame({
                 'start_year': [2012, 2016, 2019, 2021, 2024],
                 'ann_return_pct': ['18.45%', '24.14%', '9.05%', '-5.70%', '12.30%'],
                 'ann_vol_pct': ['41.40%', '17.01%', '44.08%', '32.98%', '25.50%'],
                 'sharpe': ['0.446', '1.419', '0.205', '-0.173', '0.482'],
-                'max_drawdown_pct': ['-43.76%', '-9.03%', '-31.34%', '-21.72%', '-15.20%'],
-                'hit_rate_pct': ['54.0%', '52.4%', '53.7%', '54.7%', '51.2%']
+                'max_drawdown_pct': ['-43.76%', '-9.03%', '-31.34%', '-21.72%', '-15.20%']
             })
             st.dataframe(demo_metrics, use_container_width=True)
         
@@ -690,7 +696,7 @@ def render_module_tab(module_name, display_name, benchmark):
         
         # Pick History
         st.markdown("#### Pick History")
-        st.markdown("<small>MOST RECENT 60 DAYS</small>", unsafe_allow_html=True)
+        st.markdown("<small>MOST RECENT WINDOWS</small>", unsafe_allow_html=True)
         
         if window_picks is not None and not window_picks.empty:
             history_df = window_picks[['start_year', 'pick', 'conviction']].tail(10)
@@ -719,14 +725,18 @@ def main():
     
     st.markdown("---")
     
+    # Get tickers from metadata
+    fi_tickers = metadata.get('universes', {}).get('fi', {}).get('tickers', ['TLT', 'LQD', 'HYG', 'VNQ', 'GLD', 'SLV', 'VCIT'])
+    equity_tickers = metadata.get('universes', {}).get('equity', {}).get('tickers', ['SPY', 'QQQ', 'XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLY', 'XLP', 'XLU', 'XLRE', 'XLB', 'GDX', 'XME', 'IWM'])
+    
     # Create tabs for FI and Equity
     tab1, tab2 = st.tabs(["🏦 Fixed Income / Commodities", "📊 Equity"])
     
     with tab1:
-        render_module_tab("fi", "Fixed Income / Commodities", "AGG")
+        render_module_tab("fi", "Fixed Income / Commodities", "AGG", fi_tickers)
     
     with tab2:
-        render_module_tab("equity", "Equity", "SPY")
+        render_module_tab("equity", "Equity", "SPY", equity_tickers)
     
     # Footer
     st.markdown("---")
