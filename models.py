@@ -48,9 +48,15 @@ class SignatureGPModel:
             signatures.append(sig_vec)
         
         result = self.forecaster.predict(signatures)
-        # Ensure result is numpy array
+        
+        # Ensure result is numpy array with shape (n_samples,)
+        if isinstance(result, tuple):
+            result = result[0]  # Take mean if tuple (mean, std)
         if isinstance(result, list):
             result = np.array(result)
+        if len(result.shape) > 1:
+            result = result.flatten()
+        
         return result
 
 
@@ -93,6 +99,7 @@ class EnsembleForecaster:
         self.weights = weights or [0.2, 0.6, 0.2]  # Emphasis on depth 3
         self.models = {}
         self.depth_selector = AdaptiveDepthSelector(depths=depths)
+        self.trained = False
     
     def fit(self, X_paths, y_returns):
         """Fit all models at different depths"""
@@ -101,36 +108,52 @@ class EnsembleForecaster:
             model.fit(X_paths, y_returns)
             self.models[depth] = {'model': model, 'weight': weight}
         
+        self.trained = True
         return self
     
     def predict(self, X_paths, return_all=False):
         """Weighted ensemble prediction"""
+        if not self.trained:
+            raise ValueError("Model not trained. Call fit() first.")
+        
+        if len(self.models) == 0:
+            raise ValueError("No models in ensemble. Call fit() first.")
+        
         predictions = []
         weights = []
         
         for depth, info in self.models.items():
             pred = info['model'].predict(X_paths)
-            # Convert to numpy array if needed
+            
+            # Convert to numpy array
             if isinstance(pred, list):
                 pred = np.array(pred)
+            if isinstance(pred, tuple):
+                pred = pred[0]
+            
+            # Ensure 1D array
+            pred = np.array(pred).flatten()
+            
             predictions.append(pred)
             weights.append(info['weight'])
         
         # Normalize weights
         weights = np.array(weights) / sum(weights)
         
-        # Initialize ensemble prediction with same shape as first prediction
+        # Initialize ensemble prediction
         ensemble_pred = np.zeros_like(predictions[0], dtype=np.float64)
         
         for pred, w in zip(predictions, weights):
-            # Ensure pred is numpy array
-            pred_array = np.array(pred)
-            ensemble_pred += w * pred_array
+            ensemble_pred += w * pred
         
         if return_all:
             return ensemble_pred, predictions, weights
         
         return ensemble_pred
+    
+    def predict_single(self, X_path):
+        """Predict for a single path"""
+        return self.predict([X_path])[0]
     
     def select_best_depth(self, X_paths, y_returns):
         """Select optimal depth based on validation performance"""
@@ -173,3 +196,17 @@ class ModelRegistry:
                 return pickle.load(f)
         except FileNotFoundError:
             return None
+    
+    def delete(self, module, mode, window_start=None):
+        """Delete saved model"""
+        import os
+        
+        if window_start:
+            filename = f"{self.save_dir}/{module}_{mode}_window_{window_start}.pkl"
+        else:
+            filename = f"{self.save_dir}/{module}_{mode}.pkl"
+        
+        if os.path.exists(filename):
+            os.remove(filename)
+            return True
+        return False
