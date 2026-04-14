@@ -4,6 +4,8 @@ Benchmark: SPY
 Tickers: SPY, QQQ, XLK, XLF, XLE, XLV, XLI, XLY, XLP, XLU, XLRE, XLB, GDX, XME, IWM
 """
 
+import numpy as np
+import pandas as pd
 from constants import EQUITY_TICKERS, EQUITY_BENCHMARK
 from data_pipeline import DataPipeline
 from models import EnsembleForecaster
@@ -11,9 +13,6 @@ from forecasting import ExpandingWindowConsensus
 from selection import ETFSelector, MacroRegimeContext, RoughnessAnalyzer
 from outputs import SignalGenerator, BenchmarkComparator
 from utils import Logger, Timer, CacheManager
-
-import numpy as np
-import pandas as pd
 
 
 class EquityModule:
@@ -38,9 +37,15 @@ class EquityModule:
         if start_year:
             # Filter to specific window
             mask = (data['macro_dates'].year >= start_year) & (data['macro_dates'].year <= end_year)
-            data['train'] = (data['train'][0][mask[:len(data['train'][0])]], data['train'][1][mask[:len(data['train'][1])]])
-            data['val'] = (data['val'][0][mask[:len(data['val'][0])]], data['val'][1][mask[:len(data['val'][1])]])
-            data['test'] = (data['test'][0][mask[:len(data['test'][0])]], data['test'][1][mask[:len(data['test'][1])]])
+            if len(data['train'][0]) > 0:
+                data['train'] = (data['train'][0][mask[:len(data['train'][0])]], 
+                                data['train'][1][mask[:len(data['train'][1])]])
+            if len(data['val'][0]) > 0:
+                data['val'] = (data['val'][0][mask[:len(data['val'][0])]], 
+                              data['val'][1][mask[:len(data['val'][1])]])
+            if len(data['test'][0]) > 0:
+                data['test'] = (data['test'][0][mask[:len(data['test'][0])]], 
+                               data['test'][1][mask[:len(data['test'][1])]])
         
         return data
     
@@ -48,16 +53,28 @@ class EquityModule:
         """Train on fixed dataset 2008-2026"""
         self.logger.info("Training Equity module on fixed dataset (2008-2026)")
         
-        with Timer() as t:
+        timer = Timer()
+        timer.__enter__()
+        
+        try:
             data = self.get_data()
             
             if data is None:
                 self.logger.error("Failed to load data")
+                timer.__exit__(None, None, None)
                 return None
             
-            # Combine train+val for final model
+            # Check if data has enough samples
+            if len(data['train'][0]) == 0 or len(data['val'][0]) == 0 or len(data['test'][0]) == 0:
+                self.logger.error("Not enough data for training")
+                self.logger.error(f"Train samples: {len(data['train'][0])}, Val: {len(data['val'][0])}, Test: {len(data['test'][0])}")
+                timer.__exit__(None, None, None)
+                return None
+            
             X_train = np.vstack([data['train'][0], data['val'][0]])
             y_train = np.vstack([data['train'][1], data['val'][1]])
+            
+            self.logger.info(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
             
             # Train ensemble
             model = EnsembleForecaster(depths=[2, 3, 4])
@@ -68,30 +85,37 @@ class EquityModule:
             y_test = data['test'][1]
             predictions = model.predict(X_test)
             
-            # Check dimensions and adjust
+            self.logger.info(f"Predictions shape: {predictions.shape}")
+            
+            # Compute metrics - handle both 1D and 2D
             if len(predictions.shape) == 1:
-                # Predictions is 1D (mean across ETFs), need to reshape
-                predictions_2d = predictions.reshape(-1, 1)
-                y_test_for_metrics = y_test.mean(axis=1)
+                pred_series = pd.Series(predictions)
+                y_test_for_metrics = y_test.mean(axis=1) if len(y_test.shape) > 1 else y_test
             else:
-                predictions_2d = predictions
-                y_test_for_metrics = y_test.mean(axis=1)
+                pred_series = pd.Series(predictions.mean(axis=1))
+                y_test_for_metrics = y_test.mean(axis=1) if len(y_test.shape) > 1 else y_test
             
-            # Compute metrics
-            metrics = BenchmarkComparator.compute_performance_metrics(
-                pd.Series(predictions_2d.mean(axis=1) if predictions_2d.shape[1] > 1 else predictions_2d.flatten()),
-                pd.Series(y_test_for_metrics)
-            )
+            metrics = BenchmarkComparator.compute_performance_metrics(pred_series, pd.Series(y_test_for_metrics))
             
-            self.logger.info(f"Fixed training complete in {t.minutes:.2f} min")
-            
-            return {
+            result = {
                 'model': model,
                 'predictions': predictions,
                 'y_test': y_test,
                 'metrics': metrics,
                 'dates': data['test'][2] if len(data['test']) > 2 else None
             }
+            
+            timer.__exit__(None, None, None)
+            self.logger.info(f"Equity fixed training complete in {timer.minutes:.2f} minutes")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Training failed: {e}")
+            import traceback
+            traceback.print_exc()
+            timer.__exit__(None, None, None)
+            return None
     
     def train_shrinking(self, start_years, end_year=2026):
         """Train on expanding windows"""
@@ -103,12 +127,16 @@ class EquityModule:
         for start_year in start_years:
             self.logger.info(f"Training window: {start_year} -> {end_year}")
             
-            with Timer() as t:
+            timer = Timer()
+            timer.__enter__()
+            
+            try:
                 pipeline = DataPipeline(module='equity')
                 X, y, dates, _ = pipeline.get_window_data(start_year, end_year)
                 
                 if len(X) == 0:
                     self.logger.warning(f"No data for window {start_year}-{end_year}, skipping")
+                    timer.__exit__(None, None, None)
                     continue
                 
                 n = len(X)
@@ -145,7 +173,13 @@ class EquityModule:
                 results.append(window_result)
                 models[start_year] = model
                 
-                self.logger.info(f"Window {start_year} complete in {t.minutes:.2f} min")
+                timer.__exit__(None, None, None)
+                self.logger.info(f"Window {start_year} complete in {timer.minutes:.2f} min")
+                
+            except Exception as e:
+                self.logger.error(f"Window {start_year} failed: {e}")
+                timer.__exit__(None, None, None)
+                continue
         
         # Compute consensus
         consensus_weights = {'annualized_return': 0.60, 'sharpe_ratio': 0.20, 'max_drawdown': 0.20}
@@ -167,7 +201,10 @@ class EquityModule:
             per_etf_preds = np.ones(len(self.tickers)) * mean_pred
         else:
             mean_pred = predictions.mean(axis=1)[0] if len(predictions) > 0 else 0
-            per_etf_preds = predictions[0] if len(predictions[0]) == len(self.tickers) else np.ones(len(self.tickers)) * mean_pred
+            if len(predictions[0]) == len(self.tickers):
+                per_etf_preds = predictions[0]
+            else:
+                per_etf_preds = np.ones(len(self.tickers)) * mean_pred
         
         regime = self.regime_detector.get_regime(macro_values)
         
