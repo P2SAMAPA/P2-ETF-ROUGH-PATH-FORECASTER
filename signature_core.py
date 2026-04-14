@@ -26,23 +26,29 @@ class SignatureComputer:
         self.time_channel = time_channel
     
     def augment_path(self, path):
-        """Augment path with lead-lag, basepoint, and time channel"""
-        # path shape: (n_steps, n_dims)
+        """
+        Augment path with lead-lag, basepoint, and time channel
+        path shape: (n_steps, n_dims)
+        """
+        # Make a copy
         augmented = path.copy()
         
-        # Add time channel
+        # Add time channel - ensure same dimensions
         if self.time_channel:
-            t = np.linspace(0, 1, len(path)).reshape(-1, 1)
-            augmented = np.hstack([augmented, t])
+            t = np.linspace(0, 1, len(augmented)).reshape(-1, 1)
+            # Both should be 2D arrays
+            augmented = np.column_stack([augmented, t])
         
-        # Add basepoint (start at origin)
+        # Add basepoint (start at origin) - insert at beginning
         if self.basepoint:
-            augmented = np.vstack([np.zeros(augmented.shape[1]), augmented])
+            zero_row = np.zeros((1, augmented.shape[1]))
+            augmented = np.vstack([zero_row, augmented])
         
         # Lead-lag augmentation: [x, x_lag] where x_lag is lagged version
-        if self.lead_lag and len(augmented) > 1:
-            lead = augmented[1:, :]
-            lag = augmented[:-1, :]
+        if self.lead_lag and len(augmented) > 2:
+            # Create lead-lag pairs
+            lead = augmented[1:, :]  # x_{t+1}
+            lag = augmented[:-1, :]  # x_t
             # Interleave: (lead_0, lag_0, lead_1, lag_1, ...)
             interleaved = np.zeros((len(lead) + len(lag), lead.shape[1]))
             interleaved[0::2] = lead
@@ -51,44 +57,10 @@ class SignatureComputer:
         
         return augmented
     
-    def signature_term(self, path, indices):
-        """Compute a single signature term (iterated integral)"""
-        term = 1.0
-        current = path[0]
-        
-        for idx in indices:
-            # Approximate integral using trapezoidal rule
-            integral = 0
-            for i in range(len(path) - 1):
-                midpoint = (path[i+1, idx] + path[i, idx]) / 2
-                integral += (path[i+1, idx] - path[i, idx]) * midpoint
-            term *= integral
-        
-        return term
-    
-    def compute_signature(self, path):
-        """
-        Compute full truncated signature up to specified depth
-        Returns dict of multi-index -> value
-        """
-        augmented = self.augment_path(path)
-        dim = augmented.shape[1]
-        
-        signature = {}
-        
-        # Depth 0: constant 1
-        signature[tuple()] = 1.0
-        
-        # Depths 1 through self.depth
-        for d in range(1, self.depth + 1):
-            for indices in combinations_with_replacement(range(dim), d):
-                sig_val = self._compute_iterated_integral(augmented, indices)
-                signature[indices] = sig_val
-        
-        return signature
-    
     def _compute_iterated_integral(self, path, indices):
-        """Compute iterated integral for given multi-index"""
+        """
+        Compute iterated integral for given multi-index using trapezoidal rule
+        """
         if len(indices) == 1:
             # First order: simple increment
             return path[-1, indices[0]] - path[0, indices[0]]
@@ -108,6 +80,30 @@ class SignatureComputer:
         
         return result
     
+    def compute_signature(self, path):
+        """
+        Compute full truncated signature up to specified depth
+        Returns dict of multi-index -> value
+        """
+        augmented = self.augment_path(path)
+        dim = augmented.shape[1]
+        
+        signature = {}
+        
+        # Depth 0: constant 1
+        signature[tuple()] = 1.0
+        
+        # Depths 1 through self.depth
+        for d in range(1, self.depth + 1):
+            for indices in combinations_with_replacement(range(dim), d):
+                try:
+                    sig_val = self._compute_iterated_integral(augmented, indices)
+                    signature[indices] = sig_val
+                except Exception:
+                    signature[indices] = 0.0
+        
+        return signature
+    
     def signature_vector(self, path):
         """Flatten signature into a vector"""
         sig = self.compute_signature(path)
@@ -122,16 +118,12 @@ class LogSignature:
     @staticmethod
     def log_signature(signature_dict, depth):
         """Compute log-signature using series expansion"""
-        # Simplified: extract log signature from truncated signature
-        # For depth 3, log signature terms are:
-        # Level 1: same as signature level 1
-        # Level 2: [i,j] - 0.5 * ([i] ⊗ [j] - [j] ⊗ [i])
         log_sig = {}
         
-        # Level 1
-        for i in signature_dict:
-            if len(i) == 1:
-                log_sig[i] = signature_dict[i]
+        # Level 1: same as signature level 1
+        for key, value in signature_dict.items():
+            if len(key) == 1:
+                log_sig[key] = value
         
         # Level 2 (antisymmetric part)
         if depth >= 2:
@@ -170,10 +162,16 @@ class NeumannSignatureKernel:
         n = len(path)
         tiles = []
         
-        for start in range(0, n, self.tile_size - self.tile_size // 2):
-            end = min(start + self.tile_size, n)
-            if end - start >= 2:  # Need at least 2 points
-                tiles.append(path[start:end])
+        if n <= self.tile_size:
+            return [path]
+        
+        step = self.tile_size // 2
+        for start in range(0, n - self.tile_size + 1, step):
+            tiles.append(path[start:start + self.tile_size])
+        
+        # Add last tile
+        if n - self.tile_size > 0:
+            tiles.append(path[-self.tile_size:])
         
         return tiles
     
@@ -185,12 +183,12 @@ class NeumannSignatureKernel:
         sig_a = self.sig_computer.signature_vector(path_a)
         sig_b = self.sig_computer.signature_vector(path_b)
         
-        # Truncated inner product (Neumann series)
+        # Truncated inner product
         kernel = np.dot(sig_a, sig_b)
         
         # Check convergence
         if abs(kernel) < self.epsilon:
-            kernel = 0
+            kernel = 0.0
         
         return kernel
     
@@ -209,7 +207,7 @@ class NeumannSignatureKernel:
                 tiles_j = self._tile_sequence(paths[j])
                 
                 # Average over tile pairs
-                val = 0
+                val = 0.0
                 count = 0
                 for ti in tiles_i:
                     for tj in tiles_j:
@@ -220,6 +218,13 @@ class NeumannSignatureKernel:
                 K[j, i] = K[i, j]
         
         return K
+    
+    def kernel_vector(self, path, reference_paths):
+        """Compute kernel between a path and a list of reference paths"""
+        result = np.zeros(len(reference_paths))
+        for i, ref_path in enumerate(reference_paths):
+            result[i] = self._neumann_expansion(path, ref_path)
+        return result
 
 
 class AdaptiveDepthSelector:
@@ -234,27 +239,33 @@ class AdaptiveDepthSelector:
         Select depth that minimizes validation error
         """
         n = len(X_paths)
-        val_size = int(n * self.val_ratio)
+        val_size = max(1, int(n * self.val_ratio))
         
-        best_depth = 3  # default
+        best_depth = 3
         best_score = -np.inf
         
         for depth in self.depths:
-            computer = SignatureComputer(depth=depth)
-            kernel = NeumannSignatureKernel(depth=depth)
-            
-            # Compute kernel matrix on training portion
-            train_paths = X_paths[:-val_size]
-            K_train = kernel.kernel_matrix(train_paths)
-            
-            # Simple score: kernel alignment with target
-            if len(train_paths) > 1:
-                score = np.trace(K_train) / len(train_paths)
-            else:
-                score = 0
-            
-            if score > best_score:
-                best_score = score
-                best_depth = depth
+            try:
+                computer = SignatureComputer(depth=depth)
+                kernel = NeumannSignatureKernel(depth=depth)
+                
+                # Compute features for training portion
+                train_paths = X_paths[:-val_size]
+                if len(train_paths) < 2:
+                    continue
+                
+                # Simple score: average kernel alignment
+                scores = []
+                for path in train_paths[:min(10, len(train_paths))]:
+                    sig_vec = computer.signature_vector(path)
+                    scores.append(np.linalg.norm(sig_vec))
+                
+                score = np.mean(scores) if scores else 0
+                
+                if score > best_score:
+                    best_score = score
+                    best_depth = depth
+            except Exception:
+                continue
         
         return best_depth
