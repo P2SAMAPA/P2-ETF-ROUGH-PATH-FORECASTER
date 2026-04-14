@@ -44,6 +44,12 @@ class Logger:
 class Timer:
     """Context manager for timing operations"""
     
+    def __init__(self):
+        self.start = None
+        self.end = None
+        self.seconds = None
+        self.minutes = None
+    
     def __enter__(self):
         self.start = time.time()
         return self
@@ -77,7 +83,7 @@ class CacheManager:
             try:
                 with open(cache_file, 'rb') as f:
                     return pickle.load(f)
-            except:
+            except Exception:
                 return None
         return None
     
