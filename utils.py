@@ -47,17 +47,36 @@ class Timer:
     def __init__(self):
         self.start = None
         self.end = None
-        self.seconds = None
-        self.minutes = None
+        self.seconds = 0.0
+        self.minutes = 0.0
     
     def __enter__(self):
         self.start = time.time()
         return self
     
-    def __exit__(self, *args):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.end = time.time()
         self.seconds = self.end - self.start
         self.minutes = self.seconds / 60
+        # Don't suppress exceptions - let them propagate
+        return False
+    
+    def reset(self):
+        """Reset the timer"""
+        self.start = None
+        self.end = None
+        self.seconds = 0.0
+        self.minutes = 0.0
+    
+    def elapsed_seconds(self):
+        """Get elapsed seconds without exiting context"""
+        if self.start is None:
+            return 0.0
+        return time.time() - self.start
+    
+    def elapsed_minutes(self):
+        """Get elapsed minutes without exiting context"""
+        return self.elapsed_seconds() / 60
 
 
 class CacheManager:
@@ -107,7 +126,15 @@ class CacheManager:
                     os.remove(filepath)
         else:
             for filename in os.listdir(self.cache_dir):
-                os.remove(os.path.join(self.cache_dir, filename))
+                filepath = os.path.join(self.cache_dir, filename)
+                if os.path.isfile(filepath):
+                    os.remove(filepath)
+    
+    def exists(self, key):
+        """Check if key exists in cache"""
+        hash_key = self._get_hash(key)
+        cache_file = os.path.join(self.cache_dir, f"{hash_key}.pkl")
+        return os.path.exists(cache_file)
 
 
 class ParallelProcessor:
@@ -173,6 +200,12 @@ class MemoryOptimizer:
         """Split data into chunks"""
         for i in range(0, len(data), chunk_size):
             yield data[i:i + chunk_size]
+    
+    @staticmethod
+    def get_memory_usage_mb(obj):
+        """Get memory usage of object in MB"""
+        import sys
+        return sys.getsizeof(obj) / (1024 * 1024)
 
 
 class GitHubActionsHelpers:
@@ -198,8 +231,12 @@ class GitHubActionsHelpers:
     def set_output(name, value):
         """Set GitHub Actions output"""
         if GitHubActionsHelpers.is_github_actions():
-            with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
-                f.write(f"{name}={value}\n")
+            github_output = os.environ.get('GITHUB_OUTPUT')
+            if github_output:
+                with open(github_output, 'a') as f:
+                    f.write(f"{name}={value}\n")
+            else:
+                print(f"::set-output name={name}::{value}")
     
     @staticmethod
     def set_failed(message):
@@ -223,5 +260,27 @@ class GitHubActionsHelpers:
     @staticmethod
     def get_memory_limit_mb():
         """Get memory limit in MB (GitHub Actions free tier: ~7GB)"""
-        import psutil
-        return psutil.virtual_memory().available // (1024 * 1024)
+        try:
+            import psutil
+            return psutil.virtual_memory().available // (1024 * 1024)
+        except ImportError:
+            # Fallback - assume 7GB
+            return 7 * 1024
+    
+    @staticmethod
+    def save_cache(key, data, cache_dir='data/cache'):
+        """Save data to GitHub Actions cache"""
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"{key}.pkl")
+        with open(cache_file, 'wb') as f:
+            pickle.dump(data, f)
+        return cache_file
+    
+    @staticmethod
+    def load_cache(key, cache_dir='data/cache'):
+        """Load data from GitHub Actions cache"""
+        cache_file = os.path.join(cache_dir, f"{key}.pkl")
+        if os.path.exists(cache_file):
+            with open(cache_file, 'rb') as f:
+                return pickle.load(f)
+        return None
