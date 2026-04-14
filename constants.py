@@ -10,25 +10,25 @@ HF_RESULTS_REPO = "P2SAMAPA/p2-etf-rough-path-forecaster-results"
 # Macro columns from source data
 MACRO_COLS = ["VIX", "DXY", "T10Y2Y", "TBILL_3M", "IG_SPREAD", "HY_SPREAD"]
 
-# Universes
+# Universes - EXCLUDING benchmarks (AGG and SPY are benchmarks only, NOT tradable)
 FI_TICKERS = ["TLT", "LQD", "HYG", "VNQ", "GLD", "SLV", "VCIT"]
 FI_BENCHMARK = "AGG"
 
 EQUITY_TICKERS = [
-    "SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY",
+    "QQQ", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY",
     "XLP", "XLU", "XLRE", "XLB", "GDX", "XME", "IWM"
 ]
 EQUITY_BENCHMARK = "SPY"
 
 # Shrinking windows start years (2008 through 2024 = 17 windows)
-SHRINKING_START_YEARS = list(range(2008, 2025))  # 2008, 2009, ..., 2024
+SHRINKING_START_YEARS = list(range(2008, 2025))
 SHRINKING_END_YEAR = 2026
 
 # Consensus weights
 CONSENSUS_WEIGHTS = {
     "annualized_return": 0.60,
     "sharpe_ratio": 0.20,
-    "max_drawdown": 0.20  # lower is better (inverted in scoring)
+    "max_drawdown": 0.20
 }
 
 # Training splits
@@ -56,7 +56,7 @@ LOG_ODE_ATOL = 1e-6
 
 # Selection parameters
 TRADE_COST_BPS = 12
-MIN_CONVICTION_FOR_TRADE = 0.05
+MIN_CONVICTION_FOR_TRADE = 5.0  # Minimum 5% conviction to trade
 TOP_N_PICKS = 3
 
 # Date range
