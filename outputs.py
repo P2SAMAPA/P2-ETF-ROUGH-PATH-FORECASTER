@@ -7,7 +7,7 @@ import json
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from huggingface_hub import HfApi, Repository
+from huggingface_hub import HfApi
 import os
 
 
@@ -20,7 +20,7 @@ class SignalGenerator:
         self.tickers = tickers
     
     def generate_signal(self, picks, macro_regime, roughness_info, signature_depth, 
-                        predicted_returns=None, lookback_days=30, model_type="Ridge"):
+                        lookback_days=30, model_type="Ridge"):
         """
         Generate complete signal output
         """
