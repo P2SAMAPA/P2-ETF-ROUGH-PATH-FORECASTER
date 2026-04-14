@@ -4,29 +4,25 @@ Model registry and ensemble forecaster for ROUGH-PATH-FORECASTER
 
 import numpy as np
 from signature_core import SignatureComputer, NeumannSignatureKernel, AdaptiveDepthSelector
-from kernel_engine import GaussianProcessForecaster, KernelRidgeForecaster
+from kernel_engine import KernelRidgeForecaster
 from log_ode import LogODEForecaster, RoughPathEstimator
 
 
-class SignatureGPModel:
-    """Wrapper for Signature + Gaussian Process"""
+class SignatureModel:
+    """Wrapper for Signature + Kernel Ridge Regression"""
     
-    def __init__(self, depth=3, use_gp=True):
+    def __init__(self, depth=3):
         self.depth = depth
-        self.use_gp = use_gp
         self.sig_computer = SignatureComputer(depth=depth)
-        self.kernel = NeumannSignatureKernel(depth=depth)
-        
-        if use_gp:
-            self.forecaster = GaussianProcessForecaster(depth=depth)
-        else:
-            self.forecaster = KernelRidgeForecaster(depth=depth)
-        
+        self.forecaster = KernelRidgeForecaster(depth=depth, alpha=0.1, kernel='rbf')
         self.trained = False
     
     def fit(self, X_paths, y_returns):
-        """Fit model on path data"""
-        # Compute signatures for all paths
+        """
+        Fit model on path data
+        X_paths: list of paths (n_samples, path_length, n_features)
+        y_returns: (n_samples, n_etfs) - target returns for each ETF
+        """
         signatures = []
         for path in X_paths:
             sig_vec = self.sig_computer.signature_vector(path)
@@ -34,11 +30,10 @@ class SignatureGPModel:
         
         self.forecaster.fit(signatures, y_returns)
         self.trained = True
-        
         return self
     
     def predict(self, X_paths):
-        """Predict returns for new paths"""
+        """Predict returns for new paths - returns (n_samples, n_etfs)"""
         if not self.trained:
             raise ValueError("Model not trained")
         
@@ -49,62 +44,26 @@ class SignatureGPModel:
         
         result = self.forecaster.predict(signatures)
         
-        # Ensure result is numpy array with shape (n_samples,)
-        if isinstance(result, tuple):
-            result = result[0]  # Take mean if tuple (mean, std)
-        if isinstance(result, list):
-            result = np.array(result)
-        if len(result.shape) > 1:
-            result = result.flatten()
+        # Ensure 2D output (n_samples, n_etfs)
+        if len(result.shape) == 1:
+            result = result.reshape(-1, 1)
         
         return result
-
-
-class LogODEModel:
-    """Wrapper for Log-ODE model"""
-    
-    def __init__(self, log_sig_dim, hidden_dims=[64, 64]):
-        self.log_sig_dim = log_sig_dim
-        self.hidden_dims = hidden_dims
-        self.model = LogODEForecaster(log_sig_dim, hidden_dims)
-        self.roughness_estimator = RoughPathEstimator()
-        self.trained = False
-    
-    def fit(self, log_sig_paths, returns, epochs=100):
-        """Fit Log-ODE model"""
-        self.model.train(log_sig_paths, returns, epochs=epochs)
-        self.trained = True
-        return self
-    
-    def predict(self, initial_log_sig, time_steps=10):
-        """Predict future trajectory"""
-        if not self.trained:
-            raise ValueError("Model not trained")
-        
-        result = self.model.predict(initial_log_sig, time_steps)
-        if isinstance(result, list):
-            result = np.array(result)
-        return result
-    
-    def get_roughness(self, log_sig_trajectory):
-        """Get path roughness estimate"""
-        return self.roughness_estimator.compute_roughness(log_sig_trajectory)
 
 
 class EnsembleForecaster:
-    """Ensemble of multiple forecasting methods"""
+    """Ensemble of multiple forecasting methods at different depths"""
     
     def __init__(self, depths=[2, 3, 4], weights=None):
         self.depths = depths
-        self.weights = weights or [0.2, 0.6, 0.2]  # Emphasis on depth 3
+        self.weights = weights or [0.2, 0.6, 0.2]
         self.models = {}
-        self.depth_selector = AdaptiveDepthSelector(depths=depths)
         self.trained = False
     
     def fit(self, X_paths, y_returns):
         """Fit all models at different depths"""
         for depth, weight in zip(self.depths, self.weights):
-            model = SignatureGPModel(depth=depth, use_gp=True)
+            model = SignatureModel(depth=depth)
             model.fit(X_paths, y_returns)
             self.models[depth] = {'model': model, 'weight': weight}
         
@@ -112,28 +71,18 @@ class EnsembleForecaster:
         return self
     
     def predict(self, X_paths, return_all=False):
-        """Weighted ensemble prediction"""
+        """Weighted ensemble prediction - returns (n_samples, n_etfs)"""
         if not self.trained:
-            raise ValueError("Model not trained. Call fit() first.")
+            raise ValueError("Model not trained")
         
         if len(self.models) == 0:
-            raise ValueError("No models in ensemble. Call fit() first.")
+            raise ValueError("No models in ensemble")
         
         predictions = []
         weights = []
         
         for depth, info in self.models.items():
             pred = info['model'].predict(X_paths)
-            
-            # Convert to numpy array
-            if isinstance(pred, list):
-                pred = np.array(pred)
-            if isinstance(pred, tuple):
-                pred = pred[0]
-            
-            # Ensure 1D array
-            pred = np.array(pred).flatten()
-            
             predictions.append(pred)
             weights.append(info['weight'])
         
@@ -154,10 +103,6 @@ class EnsembleForecaster:
     def predict_single(self, X_path):
         """Predict for a single path"""
         return self.predict([X_path])[0]
-    
-    def select_best_depth(self, X_paths, y_returns):
-        """Select optimal depth based on validation performance"""
-        return self.depth_selector.select_depth(X_paths, y_returns)
 
 
 class ModelRegistry:
@@ -169,9 +114,7 @@ class ModelRegistry:
         os.makedirs(save_dir, exist_ok=True)
     
     def save(self, model, module, mode, window_start=None):
-        """Save model to disk"""
         import pickle
-        
         if window_start:
             filename = f"{self.save_dir}/{module}_{mode}_window_{window_start}.pkl"
         else:
@@ -179,13 +122,10 @@ class ModelRegistry:
         
         with open(filename, 'wb') as f:
             pickle.dump(model, f)
-        
         return filename
     
     def load(self, module, mode, window_start=None):
-        """Load model from disk"""
         import pickle
-        
         if window_start:
             filename = f"{self.save_dir}/{module}_{mode}_window_{window_start}.pkl"
         else:
@@ -196,17 +136,3 @@ class ModelRegistry:
                 return pickle.load(f)
         except FileNotFoundError:
             return None
-    
-    def delete(self, module, mode, window_start=None):
-        """Delete saved model"""
-        import os
-        
-        if window_start:
-            filename = f"{self.save_dir}/{module}_{mode}_window_{window_start}.pkl"
-        else:
-            filename = f"{self.save_dir}/{module}_{mode}.pkl"
-        
-        if os.path.exists(filename):
-            os.remove(filename)
-            return True
-        return False
