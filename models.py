@@ -47,7 +47,11 @@ class SignatureGPModel:
             sig_vec = self.sig_computer.signature_vector(path)
             signatures.append(sig_vec)
         
-        return self.forecaster.predict(signatures)
+        result = self.forecaster.predict(signatures)
+        # Ensure result is numpy array
+        if isinstance(result, list):
+            result = np.array(result)
+        return result
 
 
 class LogODEModel:
@@ -71,7 +75,10 @@ class LogODEModel:
         if not self.trained:
             raise ValueError("Model not trained")
         
-        return self.model.predict(initial_log_sig, time_steps)
+        result = self.model.predict(initial_log_sig, time_steps)
+        if isinstance(result, list):
+            result = np.array(result)
+        return result
     
     def get_roughness(self, log_sig_trajectory):
         """Get path roughness estimate"""
@@ -103,14 +110,22 @@ class EnsembleForecaster:
         
         for depth, info in self.models.items():
             pred = info['model'].predict(X_paths)
+            # Convert to numpy array if needed
+            if isinstance(pred, list):
+                pred = np.array(pred)
             predictions.append(pred)
             weights.append(info['weight'])
         
+        # Normalize weights
         weights = np.array(weights) / sum(weights)
-        ensemble_pred = np.zeros_like(predictions[0])
+        
+        # Initialize ensemble prediction with same shape as first prediction
+        ensemble_pred = np.zeros_like(predictions[0], dtype=np.float64)
         
         for pred, w in zip(predictions, weights):
-            ensemble_pred += w * pred
+            # Ensure pred is numpy array
+            pred_array = np.array(pred)
+            ensemble_pred += w * pred_array
         
         if return_all:
             return ensemble_pred, predictions, weights
