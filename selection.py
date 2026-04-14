@@ -21,31 +21,53 @@ class ETFSelector:
         """
         Compute net scores after trade cost penalty
         """
-        # Apply trade cost penalty
-        trade_cost = self.trade_cost_bps / 10000  # Convert bps to decimal
+        trade_cost = self.trade_cost_bps / 10000
+        
+        # Ensure predicted_returns is 1D array of length len(tickers)
+        if len(predicted_returns.shape) > 1:
+            predicted_returns = predicted_returns.flatten()
+        
+        # Trim to match tickers length
+        if len(predicted_returns) > len(self.tickers):
+            predicted_returns = predicted_returns[:len(self.tickers)]
+        elif len(predicted_returns) < len(self.tickers):
+            # Pad with zeros
+            predicted_returns = np.pad(predicted_returns, (0, len(self.tickers) - len(predicted_returns)))
+        
         net_returns = predicted_returns - trade_cost
         
-        # Calculate conviction (higher for higher predicted return, lower for higher uncertainty)
-        if predicted_uncertainties is not None:
-            # Conviction = (pred_return - trade_cost) / (uncertainty + epsilon)
-            epsilon = 1e-6
-            conviction = net_returns / (predicted_uncertainties + epsilon)
-            # Normalize to 0-100 range
-            conviction = (conviction - conviction.min()) / (conviction.max() - conviction.min() + epsilon)
-            conviction = conviction * 100
+        # Calculate conviction: higher for higher predicted return
+        # Normalize to 0-100 range
+        min_ret = net_returns.min()
+        max_ret = net_returns.max()
+        
+        if max_ret - min_ret > 1e-6:
+            conviction = (net_returns - min_ret) / (max_ret - min_ret) * 100
         else:
-            # Simple normalized conviction
-            conviction = (net_returns - net_returns.min()) / (net_returns.max() - net_returns.min() + 1e-6) * 100
+            conviction = np.ones(len(net_returns)) * 50  # Default 50% if all equal
+        
+        # If uncertainties provided, adjust conviction (higher uncertainty = lower conviction)
+        if predicted_uncertainties is not None:
+            if len(predicted_uncertainties) > len(self.tickers):
+                predicted_uncertainties = predicted_uncertainties[:len(self.tickers)]
+            elif len(predicted_uncertainties) < len(self.tickers):
+                predicted_uncertainties = np.pad(predicted_uncertainties, (0, len(self.tickers) - len(predicted_uncertainties)))
+            
+            # Normalize uncertainties
+            std_norm = (predicted_uncertainties - predicted_uncertainties.min()) / (predicted_uncertainties.max() - predicted_uncertainties.min() + 1e-6)
+            # Lower uncertainty = higher conviction adjustment
+            uncertainty_factor = 1 - std_norm * 0.3
+            conviction = conviction * uncertainty_factor
         
         # Create results DataFrame
         results = pd.DataFrame({
             'ticker': self.tickers,
-            'predicted_return': predicted_returns,
-            'net_return': net_returns,
+            'predicted_return': predicted_returns * 100,  # Convert to percentage
+            'net_return': net_returns * 100,
             'conviction': conviction
         })
         
-        # Sort by net return
+        # Sort by net return (descending)
         results = results.sort_values('net_return', ascending=False)
         
         return results
@@ -86,20 +108,17 @@ class ConvictionScorer:
         """
         Compute confidence score (0-100)
         """
-        # Signal strength component (higher return = higher confidence)
-        return_magnitude = min(abs(predicted_return) * 100, 1.0)
+        # Signal strength component (higher absolute return = higher confidence)
+        return_magnitude = min(abs(predicted_return) * 10, 1.0)
         
         # Uncertainty component (lower uncertainty = higher confidence)
         if uncertainty > 0:
-            uncertainty_component = 1.0 / (1.0 + uncertainty * 10)
+            uncertainty_component = 1.0 / (1.0 + uncertainty * 5)
         else:
             uncertainty_component = 1.0
         
-        # Historical accuracy component
-        accuracy_component = historical_accuracy
-        
         # Combine
-        confidence = (return_magnitude * 0.4 + uncertainty_component * 0.3 + accuracy_component * 0.3) * 100
+        confidence = (return_magnitude * 0.5 + uncertainty_component * 0.5) * 100
         
         return min(confidence, 100.0)
     
@@ -124,21 +143,16 @@ class MacroRegimeContext:
     
     def __init__(self, macro_cols=["VIX", "T10Y2Y", "HY_SPREAD"]):
         self.macro_cols = macro_cols
-        self.regime_model = None
     
     def get_regime(self, macro_values):
-        """
-        Determine current regime based on macro values
-        Simple rule-based for now (can be upgraded to KMeans)
-        """
+        """Determine current regime based on macro values"""
         vix = macro_values.get('VIX', 15)
         hy_spread = macro_values.get('HY_SPREAD', 0.03)
         t10y2y = macro_values.get('T10Y2Y', 0.5)
         
-        # Rule-based regime detection
-        if vix > 25 and hy_spread > 0.05:
+        if vix > 30 and hy_spread > 0.06:
             regime = 3  # Crisis
-        elif vix > 20 or hy_spread > 0.04:
+        elif vix > 22 or hy_spread > 0.05:
             regime = 1  # Risk-Off
         elif t10y2y < 0:
             regime = 2  # Transitional (inverted curve)
@@ -150,7 +164,9 @@ class MacroRegimeContext:
             'regime_label': self.REGIME_LABELS.get(regime, "Unknown"),
             'vix': vix,
             'hy_spread': hy_spread,
-            't10y2y': t10y2y
+            't10y2y': t10y2y,
+            'dxy': macro_values.get('DXY', 100),
+            'ig_spread': macro_values.get('IG_SPREAD', 0.8)
         }
 
 
@@ -159,22 +175,13 @@ class RoughnessAnalyzer:
     
     @staticmethod
     def roughness_to_confidence(roughness):
-        """
-        Convert roughness to confidence adjustment
-        Lower roughness = more predictable = higher confidence
-        """
-        # Roughness typically in [0, 1]
+        """Convert roughness to confidence adjustment"""
         confidence_factor = 1.0 / (1.0 + roughness * 2)
         return confidence_factor
     
     @staticmethod
     def hurst_to_confidence(hurst):
-        """
-        Convert Hurst exponent to confidence
-        H near 0.5 (random walk) = lower confidence
-        H near 1 (trending) = higher confidence
-        """
-        # Deviation from 0.5
+        """Convert Hurst exponent to confidence"""
         deviation = abs(hurst - 0.5) * 2
         confidence_factor = 0.5 + deviation * 0.5
         return min(confidence_factor, 1.0)
