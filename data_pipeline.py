@@ -53,13 +53,27 @@ class DataPipeline:
         # Print first few columns for debugging
         print(f"Columns in data: {list(self.raw_data.columns)[:10]}...")
         
-        # Ensure datetime index
-        if 'datetime' in self.raw_data.columns:
-            self.raw_data['datetime'] = pd.to_datetime(self.raw_data['datetime'])
-            self.raw_data.set_index('datetime', inplace=True)
+        # Check for date column - try different names
+        date_col = None
+        for col in ['datetime', 'Date', 'date', 'timestamp', 'time']:
+            if col in self.raw_data.columns:
+                date_col = col
+                break
+        
+        if date_col:
+            print(f"Found date column: {date_col}")
+            self.raw_data[date_col] = pd.to_datetime(self.raw_data[date_col])
+            self.raw_data.set_index(date_col, inplace=True)
+        else:
+            print("Warning: No date column found. Using existing index.")
+        
+        # Print date range before filtering
+        print(f"Date range before filtering: {self.raw_data.index.min()} to {self.raw_data.index.max()}")
         
         # Filter to date range
-        self.raw_data = self.raw_data.loc[f"{START_YEAR}-01-01":f"{END_YEAR}-12-31"]
+        start_date = f"{START_YEAR}-01-01"
+        end_date = f"{END_YEAR}-12-31"
+        self.raw_data = self.raw_data.loc[start_date:end_date]
         
         print(f"Loaded {len(self.raw_data)} rows from {self.raw_data.index[0]} to {self.raw_data.index[-1]}")
         return self
@@ -80,7 +94,7 @@ class DataPipeline:
                 print(f"Found {ticker} -> {close_col}")
             else:
                 # Try alternative naming
-                alt_cols = [f"{ticker}_close", f"{ticker}_adj_close", f"{ticker}_price"]
+                alt_cols = [f"{ticker}_close", f"{ticker}_adj_close", f"{ticker}_price", ticker]
                 found = False
                 for alt in alt_cols:
                     if alt in self.raw_data.columns:
@@ -99,6 +113,7 @@ class DataPipeline:
         etf_returns = pd.DataFrame(returns_dict)
         etf_returns = etf_returns.dropna()
         
+        print(f"ETF returns shape: {etf_returns.shape}")
         return etf_returns
     
     def extract_macro_data(self):
@@ -114,6 +129,7 @@ class DataPipeline:
         macro_data = macro_data.dropna()
         
         print(f"Macro columns found: {available_macro}")
+        print(f"Macro data shape: {macro_data.shape}")
         
         return macro_data
     
@@ -131,10 +147,11 @@ class DataPipeline:
     def create_path_augmentation(self, macro_data):
         """Create augmented path for signature computation"""
         if macro_data.empty or len(macro_data) < 2:
+            print("Warning: Insufficient macro data for path augmentation")
             # Return dummy path
             return np.zeros((10, len(self.macro_cols) + 1))
         
-        # Handle NaN values - use ffill/bfill (no method parameter)
+        # Handle NaN values - use ffill/bfill
         macro_data = macro_data.ffill().bfill().fillna(0)
         
         # Standardize macro data
@@ -150,6 +167,12 @@ class DataPipeline:
     def train_val_test_split(self, X, y):
         """Split data into train/val/test sets"""
         n = len(X)
+        
+        if n < 10:
+            print(f"Warning: Only {n} samples, cannot do 80/10/10 split")
+            # Return whatever we have
+            return (X, y), (np.array([]), np.array([])), (np.array([]), np.array([]))
+        
         train_end = int(n * TRAIN_RATIO)
         val_end = int(n * (TRAIN_RATIO + VAL_RATIO))
         
@@ -168,6 +191,10 @@ class DataPipeline:
         """Main method to get processed data for training"""
         self.load_data()
         
+        if self.raw_data is None or len(self.raw_data) == 0:
+            print("Error: No data loaded")
+            return None
+        
         etf_returns = self.extract_etf_returns()
         macro_data = self.extract_macro_data()
         
@@ -176,6 +203,9 @@ class DataPipeline:
             return None
         
         etf_aligned, macro_aligned = self.align_data(etf_returns, macro_data)
+        
+        if len(etf_aligned) < 10:
+            print(f"Warning: Only {len(etf_aligned)} aligned samples. Training may fail.")
         
         # Create path augmentations
         X = self.create_path_augmentation(macro_aligned)
@@ -199,8 +229,17 @@ class DataPipeline:
         """Get data for a specific expanding window"""
         self.load_data()
         
+        if self.raw_data is None or len(self.raw_data) == 0:
+            return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
+        
         # Filter to window period
-        window_data = self.raw_data.loc[f"{start_year}-01-01":f"{end_year}-12-31"]
+        start_date = f"{start_year}-01-01"
+        end_date = f"{end_year}-12-31"
+        window_data = self.raw_data.loc[start_date:end_date]
+        
+        if len(window_data) == 0:
+            print(f"Warning: No data for window {start_year}-{end_year}")
+            return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
         
         # Extract ETF returns from Close prices
         etf_returns = {}
@@ -212,7 +251,7 @@ class DataPipeline:
                 etf_returns[ticker] = returns
             else:
                 # Try alternative
-                alt_cols = [f"{ticker}_close", f"{ticker}_adj_close"]
+                alt_cols = [f"{ticker}_close", f"{ticker}_adj_close", ticker]
                 found = False
                 for alt in alt_cols:
                     if alt in window_data.columns:
@@ -245,7 +284,7 @@ class DataPipeline:
         if len(etf_aligned) < 10:
             print(f"Warning: Only {len(etf_aligned)} samples for window {start_year}-{end_year}")
         
-        # Handle NaN in macro - use ffill/bfill (no method parameter)
+        # Handle NaN in macro
         macro_aligned = macro_aligned.ffill().bfill().fillna(0)
         
         X = self.create_path_augmentation(macro_aligned)
