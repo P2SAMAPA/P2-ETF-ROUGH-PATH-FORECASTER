@@ -148,9 +148,9 @@ class MacroRegimeContext:
         """
         Determine current regime based on macro values
         
-        Rules:
+        Rules (checked in order - most severe first):
+        - Crisis: VIX > 30 AND HY spread > 0.06 (most severe)
         - Risk-Off: VIX > 20 OR HY spread > 0.04
-        - Crisis: VIX > 30 AND HY spread > 0.06
         - Transitional: T10Y2Y < 0 (inverted yield curve)
         - Risk-On: everything else
         """
@@ -158,12 +158,12 @@ class MacroRegimeContext:
         hy_spread = macro_values.get('HY_SPREAD', 0.03)
         t10y2y = macro_values.get('T10Y2Y', 0.5)
         
-        # Risk-Off: VIX > 20 OR HY spread > 0.04
-        if vix > 20 or hy_spread > 0.04:
-            regime = 1  # Risk-Off
-        # Crisis: VIX > 30 AND HY spread > 0.06 (more severe, overrides Risk-Off)
-        elif vix > 30 and hy_spread > 0.06:
+        # Crisis: most severe - check first
+        if vix > 30 and hy_spread > 0.06:
             regime = 3  # Crisis
+        # Risk-Off: VIX > 20 OR HY spread > 0.04
+        elif vix > 20 or hy_spread > 0.04:
+            regime = 1  # Risk-Off
         # Transitional: inverted yield curve (T10Y2Y < 0)
         elif t10y2y < 0:
             regime = 2  # Transitional
