@@ -4,6 +4,8 @@ Benchmark: AGG
 Tickers: TLT, LQD, HYG, VNQ, GLD, SLV, VCIT
 """
 
+import numpy as np
+import pandas as pd
 from constants import FI_TICKERS, FI_BENCHMARK
 from data_pipeline import DataPipeline
 from models import EnsembleForecaster
@@ -11,9 +13,6 @@ from forecasting import ExpandingWindowConsensus
 from selection import ETFSelector, MacroRegimeContext, RoughnessAnalyzer
 from outputs import SignalGenerator, BenchmarkComparator
 from utils import Logger, Timer, CacheManager
-
-import numpy as np
-import pandas as pd
 
 
 class FIModule:
@@ -36,10 +35,17 @@ class FIModule:
             return None
         
         if start_year:
+            # Filter to specific window
             mask = (data['macro_dates'].year >= start_year) & (data['macro_dates'].year <= end_year)
-            data['train'] = (data['train'][0][mask[:len(data['train'][0])]], data['train'][1][mask[:len(data['train'][1])]])
-            data['val'] = (data['val'][0][mask[:len(data['val'][0])]], data['val'][1][mask[:len(data['val'][1])]])
-            data['test'] = (data['test'][0][mask[:len(data['test'][0])]], data['test'][1][mask[:len(data['test'][1])]])
+            if len(data['train'][0]) > 0:
+                data['train'] = (data['train'][0][mask[:len(data['train'][0])]], 
+                                data['train'][1][mask[:len(data['train'][1])]])
+            if len(data['val'][0]) > 0:
+                data['val'] = (data['val'][0][mask[:len(data['val'][0])]], 
+                              data['val'][1][mask[:len(data['val'][1])]])
+            if len(data['test'][0]) > 0:
+                data['test'] = (data['test'][0][mask[:len(data['test'][0])]], 
+                               data['test'][1][mask[:len(data['test'][1])]])
         
         return data
     
@@ -54,28 +60,37 @@ class FIModule:
                 self.logger.error("Failed to load data")
                 return None
             
+            # Check if data has enough samples
+            if len(data['train'][0]) == 0 or len(data['val'][0]) == 0 or len(data['test'][0]) == 0:
+                self.logger.error("Not enough data for training")
+                self.logger.error(f"Train samples: {len(data['train'][0])}, Val: {len(data['val'][0])}, Test: {len(data['test'][0])}")
+                return None
+            
             X_train = np.vstack([data['train'][0], data['val'][0]])
             y_train = np.vstack([data['train'][1], data['val'][1]])
             
+            self.logger.info(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
+            
+            # Train ensemble
             model = EnsembleForecaster(depths=[2, 3, 4])
             model.fit(X_train, y_train)
             
+            # Test predictions
             X_test = data['test'][0]
             y_test = data['test'][1]
             predictions = model.predict(X_test)
             
-            # Check dimensions
-            if len(predictions.shape) == 1:
-                predictions_2d = predictions.reshape(-1, 1)
-                y_test_for_metrics = y_test.mean(axis=1)
-            else:
-                predictions_2d = predictions
-                y_test_for_metrics = y_test.mean(axis=1)
+            self.logger.info(f"Predictions shape: {predictions.shape}")
             
-            metrics = BenchmarkComparator.compute_performance_metrics(
-                pd.Series(predictions_2d.mean(axis=1) if predictions_2d.shape[1] > 1 else predictions_2d.flatten()),
-                pd.Series(y_test_for_metrics)
-            )
+            # Compute metrics - handle both 1D and 2D
+            if len(predictions.shape) == 1:
+                pred_series = pd.Series(predictions)
+                y_test_for_metrics = y_test.mean(axis=1) if len(y_test.shape) > 1 else y_test
+            else:
+                pred_series = pd.Series(predictions.mean(axis=1))
+                y_test_for_metrics = y_test.mean(axis=1) if len(y_test.shape) > 1 else y_test
+            
+            metrics = BenchmarkComparator.compute_performance_metrics(pred_series, pd.Series(y_test_for_metrics))
             
             self.logger.info(f"FI fixed training complete in {t.minutes:.2f} min")
             
@@ -116,13 +131,16 @@ class FIModule:
                 X_test = X[val_end:]
                 y_test = y[val_end:]
                 
+                # Train model
                 model = EnsembleForecaster(depths=[2, 3, 4])
                 X_combined = np.vstack([X_train, X_val])
                 y_combined = np.vstack([y_train, y_val])
                 model.fit(X_combined, y_combined)
                 
+                # Predict on test
                 preds = model.predict(X_test)
                 
+                # Store results
                 window_result = {
                     'start_year': start_year,
                     'end_year': end_year,
@@ -138,6 +156,7 @@ class FIModule:
                 
                 self.logger.info(f"Window {start_year} complete in {t.minutes:.2f} min")
         
+        # Compute consensus
         consensus_weights = {'annualized_return': 0.60, 'sharpe_ratio': 0.20, 'max_drawdown': 0.20}
         consensus = ExpandingWindowConsensus(start_years, end_year, consensus_weights)
         
@@ -151,12 +170,16 @@ class FIModule:
         """Generate prediction for next day"""
         predictions = model.predict(X_paths)
         
+        # Handle 1D vs 2D predictions
         if len(predictions.shape) == 1:
             mean_pred = predictions[0] if len(predictions) > 0 else 0
             per_etf_preds = np.ones(len(self.tickers)) * mean_pred
         else:
             mean_pred = predictions.mean(axis=1)[0] if len(predictions) > 0 else 0
-            per_etf_preds = predictions[0] if len(predictions[0]) == len(self.tickers) else np.ones(len(self.tickers)) * mean_pred
+            if len(predictions[0]) == len(self.tickers):
+                per_etf_preds = predictions[0]
+            else:
+                per_etf_preds = np.ones(len(self.tickers)) * mean_pred
         
         regime = self.regime_detector.get_regime(macro_values)
         
