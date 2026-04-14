@@ -57,8 +57,11 @@ class TestETFSelector(unittest.TestCase):
         predictions = np.array([0.01, 0.02, -0.005])
         picks = selector.select_picks(predictions)
         
+        # Should return all 3 picks (top_n=3)
         self.assertEqual(len(picks), 3)
         self.assertEqual(picks[0]['ticker'], 'GOOG')  # Highest return
+        self.assertEqual(picks[1]['ticker'], 'AAPL')
+        self.assertEqual(picks[2]['ticker'], 'MSFT')
 
 
 class TestMacroRegimeContext(unittest.TestCase):
@@ -76,6 +79,11 @@ class TestMacroRegimeContext(unittest.TestCase):
         macro_risk_off = {'VIX': 22, 'HY_SPREAD': 0.045, 'T10Y2Y': 0.2}
         regime_off = detector.get_regime(macro_risk_off)
         self.assertEqual(regime_off['regime_label'], 'Risk-Off')
+        
+        # Crisis regime
+        macro_crisis = {'VIX': 35, 'HY_SPREAD': 0.08, 'T10Y2Y': -0.2}
+        regime_crisis = detector.get_regime(macro_crisis)
+        self.assertEqual(regime_crisis['regime_label'], 'Crisis')
 
 
 class TestPerformanceMetrics(unittest.TestCase):
@@ -87,6 +95,7 @@ class TestPerformanceMetrics(unittest.TestCase):
         
         self.assertIn('sharpe_ratio', metrics)
         self.assertIn('annualized_return_pct', metrics)
+        self.assertIsInstance(metrics['sharpe_ratio'], float)
 
 
 if __name__ == '__main__':
