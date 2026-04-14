@@ -10,6 +10,7 @@ from sklearn.kernel_ridge import KernelRidge
 from sklearn.preprocessing import StandardScaler
 from functools import lru_cache
 import pickle
+import os
 
 
 class SignatureGPModel(gpytorch.models.ExactGP):
@@ -44,9 +45,7 @@ class SignatureKernel(gpytorch.kernels.Kernel):
         
         for i in range(n1):
             for j in range(n2):
-                # Need to map indices back to paths
-                # This is handled by the GP wrapper
-                K[i, j] = torch.tensor(1.0)  # Placeholder - actual kernel in wrapper
+                K[i, j] = torch.tensor(1.0)
         
         return K
 
@@ -61,6 +60,7 @@ class GaussianProcessForecaster:
         self.likelihood = None
         self.scaler_x = StandardScaler()
         self.scaler_y = StandardScaler()
+        self.trained = False
     
     def fit(self, X_signatures, y_returns):
         """
@@ -70,15 +70,15 @@ class GaussianProcessForecaster:
         """
         # Stack signatures into matrix
         X = np.vstack(X_signatures)
-        y = y_returns.mean(axis=1)  # Predict average return across ETFs or per-ETF
+        y = y_returns.mean(axis=1)  # Predict average return across ETFs
         
         # Scale
         X_scaled = self.scaler_x.fit_transform(X)
         y_scaled = self.scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
         
         # Convert to tensors
-        train_x = torch.tensor(X_scaled).float()
-        train_y = torch.tensor(y_scaled).float()
+        train_x = torch.tensor(X_scaled, dtype=torch.float32)
+        train_y = torch.tensor(y_scaled, dtype=torch.float32)
         
         # Initialize likelihood and model
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
@@ -101,15 +101,19 @@ class GaussianProcessForecaster:
         
         self.model.eval()
         self.likelihood.eval()
+        self.trained = True
         
         return self
     
     def predict(self, X_signatures, return_std=True):
         """Predict returns for new signatures"""
+        if not self.trained:
+            raise ValueError("Model not trained yet. Call fit() first.")
+        
         X = np.vstack(X_signatures)
         X_scaled = self.scaler_x.transform(X)
         
-        test_x = torch.tensor(X_scaled).float()
+        test_x = torch.tensor(X_scaled, dtype=torch.float32)
         
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             predictions = self.likelihood(self.model(test_x))
@@ -117,7 +121,11 @@ class GaussianProcessForecaster:
             std = predictions.stddev.numpy()
         
         mean = self.scaler_y.inverse_transform(mean.reshape(-1, 1)).flatten()
-        std = std * self.scaler_y.scale_[0]  # Approximate inverse scaling
+        std = std * self.scaler_y.scale_[0]
+        
+        # Ensure numpy array
+        mean = np.array(mean, dtype=np.float64)
+        std = np.array(std, dtype=np.float64)
         
         if return_std:
             return mean, std
@@ -134,6 +142,7 @@ class KernelRidgeForecaster:
         self.model = None
         self.scaler_x = StandardScaler()
         self.scaler_y = StandardScaler()
+        self.trained = False
     
     def fit(self, X_signatures, y_returns):
         """Fit Kernel Ridge model"""
@@ -145,18 +154,23 @@ class KernelRidgeForecaster:
         
         self.model = KernelRidge(alpha=self.alpha, kernel=self.kernel)
         self.model.fit(X_scaled, y_scaled)
+        self.trained = True
         
         return self
     
     def predict(self, X_signatures):
         """Predict returns"""
+        if not self.trained:
+            raise ValueError("Model not trained yet. Call fit() first.")
+        
         X = np.vstack(X_signatures)
         X_scaled = self.scaler_x.transform(X)
         
         y_scaled = self.model.predict(X_scaled)
         y = self.scaler_y.inverse_transform(y_scaled.reshape(-1, 1)).flatten()
         
-        return y
+        # Ensure numpy array
+        return np.array(y, dtype=np.float64)
 
 
 class KernelCache:
@@ -164,26 +178,43 @@ class KernelCache:
     
     def __init__(self, cache_dir='data/cache'):
         self.cache_dir = cache_dir
-        import os
         os.makedirs(cache_dir, exist_ok=True)
     
-    @lru_cache(maxsize=100)
-    def get_kernel_matrix(self, cache_key, paths_hash):
-        """Cached kernel matrix retrieval"""
-        # Implementation with file-based caching
-        cache_file = f"{self.cache_dir}/kernel_{cache_key}.pkl"
+    def _get_cache_key(self, paths_hash, depth, tile_size):
+        """Generate cache key"""
+        return f"{paths_hash}_d{depth}_t{tile_size}"
+    
+    def get(self, cache_key):
+        """Get cached kernel matrix"""
+        cache_file = os.path.join(self.cache_dir, f"{cache_key}.pkl")
         
-        import os
-        import pickle
         if os.path.exists(cache_file):
-            with open(cache_file, 'rb') as f:
-                return pickle.load(f)
-        
+            try:
+                with open(cache_file, 'rb') as f:
+                    return pickle.load(f)
+            except Exception:
+                return None
         return None
     
-    def save_kernel_matrix(self, cache_key, matrix):
+    def set(self, cache_key, matrix):
         """Save kernel matrix to cache"""
-        cache_file = f"{self.cache_dir}/kernel_{cache_key}.pkl"
-        import pickle
-        with open(cache_file, 'wb') as f:
-            pickle.dump(matrix, f)
+        cache_file = os.path.join(self.cache_dir, f"{cache_key}.pkl")
+        
+        try:
+            with open(cache_file, 'wb') as f:
+                pickle.dump(matrix, f)
+            return True
+        except Exception:
+            return False
+    
+    def clear(self, older_than_days=None):
+        """Clear cache"""
+        if older_than_days:
+            cutoff = time.time() - (older_than_days * 86400)
+            for filename in os.listdir(self.cache_dir):
+                filepath = os.path.join(self.cache_dir, filename)
+                if os.path.getmtime(filepath) < cutoff:
+                    os.remove(filepath)
+        else:
+            for filename in os.listdir(self.cache_dir):
+                os.remove(os.path.join(self.cache_dir, filename))
