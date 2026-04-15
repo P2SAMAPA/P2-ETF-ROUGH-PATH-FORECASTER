@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 from signature_core import SignatureComputer, AdaptiveDepthSelector
-from models import EnsembleForecaster, SignatureGPModel
+from models import EnsembleForecaster, SignatureModel
 
 
 class RollingWindowForecaster:
@@ -106,7 +106,7 @@ class ExpandingWindowConsensus:
                 'sharpe': sharpe,
                 'max_drawdown_pct': max_dd * 100,
                 'hit_rate_pct': hit_rate * 100,
-                'ann_alpha_pct': (ann_return - 0.03) * 100,  # Assuming 3% risk-free
+                'ann_alpha_pct': (ann_return - 0.03) * 100,
                 'positive_years': self._positive_years_count(window_returns)
             }
         
@@ -176,9 +176,9 @@ class ExpandingWindowConsensus:
             # Get the pick for this window from predictions
             window_preds = predictions_df[predictions_df.index.year >= row['start_year']]
             if len(window_preds) > 0:
-                # Most recent prediction for this window
-                pick = window_preds.iloc[-1]['pick']
-                pick_counts[pick] = pick_counts.get(pick, 0) + 1
+                pick = window_preds.iloc[-1].get('pick', None)
+                if pick:
+                    pick_counts[pick] = pick_counts.get(pick, 0) + 1
         
         if not pick_counts:
             return []
@@ -215,13 +215,24 @@ class UncertaintyQuantifier:
         """
         # Compute non-conformity scores on calibration set
         calib_preds = model.predict(X_calib)
-        scores = np.abs(y_calib - calib_preds)
+        
+        # If predictions are 2D, take mean across ETFs
+        if len(calib_preds.shape) > 1:
+            calib_preds = calib_preds.mean(axis=1)
+            y_calib_flat = y_calib.mean(axis=1) if len(y_calib.shape) > 1 else y_calib
+        else:
+            y_calib_flat = y_calib
+        
+        scores = np.abs(y_calib_flat - calib_preds)
         
         # Get quantile
         q = np.percentile(scores, (1 - alpha) * 100)
         
         # Apply to test set
         test_preds = model.predict(X_test)
+        if len(test_preds.shape) > 1:
+            test_preds = test_preds.mean(axis=1)
+        
         lower = test_preds - q
         upper = test_preds + q
         
