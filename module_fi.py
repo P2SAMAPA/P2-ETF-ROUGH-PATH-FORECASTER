@@ -1,5 +1,5 @@
 """
-Fixed Income / Commodities Module for ROUGH-PATH-FORECASTER - DEBUG VERSION
+Fixed Income / Commodities Module for ROUGH-PATH-FORECASTER - FIXED VERSION
 """
 
 import numpy as np
@@ -38,9 +38,15 @@ class FIModule:
                     timer.__exit__(None, None, None)
                     continue
                 
-                n = len(dates)
-                test_size = int(n * 0.2)
-                train_size = n - test_size
+                # Use a FIXED test size (e.g., 252 trading days = 1 year)
+                test_days = 252
+                
+                if len(dates) <= test_days:
+                    self.logger.warning(f"Window {start_year} has only {len(dates)} days, skipping")
+                    timer.__exit__(None, None, None)
+                    continue
+                
+                train_size = len(dates) - test_days
                 
                 X_train = X[:train_size]
                 y_train = y[:train_size]
@@ -50,21 +56,11 @@ class FIModule:
                 
                 self.logger.info(f"Window {start_year}: train={len(X_train)}, test={len(X_test)}")
                 
-                # DEBUG: Print y_test info
-                print(f"\n=== DEBUG FI Window {start_year} ===")
-                print(f"y_test shape: {y_test.shape}")
-                print(f"y_test first 3 rows:\n{y_test[:3]}")
-                print(f"y_test mean per row (first 5): {y_test.mean(axis=1)[:5]}")
-                print(f"y_test std per row (first 5): {y_test.std(axis=1)[:5]}")
-                
                 model = EnsembleForecaster(depths=[2, 3, 4])
                 model.fit(X_train, y_train)
                 preds = model.predict(X_test).copy()
                 
-                # Calculate metrics
                 returns = y_test.mean(axis=1) if len(y_test.shape) > 1 else y_test
-                print(f"Returns (mean across ETFs) first 5: {returns[:5]}")
-                print(f"Returns min: {returns.min():.6f}, max: {returns.max():.6f}, std: {returns.std():.6f}")
                 
                 ann_return = np.mean(returns) * 252
                 ann_vol = np.std(returns) * np.sqrt(252)
