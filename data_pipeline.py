@@ -1,7 +1,6 @@
 """
 Data pipeline for ROUGH-PATH-FORECASTER
 Loads master.parquet from HF, processes ETF and macro data
-Data format: {TICKER}_Open, {TICKER}_High, {TICKER}_Low, {TICKER}_Close, {TICKER}_Volume
 """
 
 import numpy as np
@@ -17,287 +16,84 @@ from constants import (
 
 
 class DataPipeline:
-    """Load and preprocess data for rough path forecasting"""
-    
     def __init__(self, module='fi'):
-        """
-        Args:
-            module: 'fi' for Fixed Income/Commodities, 'equity' for Equity
-        """
         self.module = module
-        
-        if module == 'fi':
-            self.tickers = FI_TICKERS
-            self.benchmark = FI_BENCHMARK
-        else:
-            self.tickers = EQUITY_TICKERS
-            self.benchmark = EQUITY_BENCHMARK
-        
+        self.tickers = FI_TICKERS if module == 'fi' else EQUITY_TICKERS
+        self.benchmark = FI_BENCHMARK if module == 'fi' else EQUITY_BENCHMARK
         self.macro_cols = MACRO_COLS
         self.raw_data = None
-        self.processed_data = None
         self.scaler = StandardScaler()
     
     def load_data(self):
-        """Load master.parquet from Hugging Face"""
         print(f"Loading data from {HF_SOURCE_REPO}/{HF_SOURCE_FILE}")
-        
         local_path = hf_hub_download(
             repo_id=HF_SOURCE_REPO,
             filename=HF_SOURCE_FILE,
             repo_type="dataset"
         )
-        
         self.raw_data = pd.read_parquet(local_path)
         
-        # Print first few columns for debugging
-        print(f"Columns in data: {list(self.raw_data.columns)[:10]}...")
+        if 'Date' in self.raw_data.columns:
+            self.raw_data['Date'] = pd.to_datetime(self.raw_data['Date'])
+            self.raw_data.set_index('Date', inplace=True)
         
-        # Check for date column - try different names
-        date_col = None
-        for col in ['datetime', 'Date', 'date', 'timestamp', 'time']:
-            if col in self.raw_data.columns:
-                date_col = col
-                break
-        
-        if date_col:
-            print(f"Found date column: {date_col}")
-            self.raw_data[date_col] = pd.to_datetime(self.raw_data[date_col])
-            self.raw_data.set_index(date_col, inplace=True)
-        else:
-            print("Warning: No date column found. Using existing index.")
-        
-        # Print date range before filtering
-        print(f"Date range before filtering: {self.raw_data.index.min()} to {self.raw_data.index.max()}")
-        
-        # Filter to date range
-        start_date = f"{START_YEAR}-01-01"
-        end_date = f"{END_YEAR}-12-31"
-        self.raw_data = self.raw_data.loc[start_date:end_date]
-        
-        print(f"Loaded {len(self.raw_data)} rows from {self.raw_data.index[0]} to {self.raw_data.index[-1]}")
+        self.raw_data = self.raw_data.loc[f"{START_YEAR}-01-01":f"{END_YEAR}-12-31"]
+        print(f"Loaded {len(self.raw_data)} rows")
         return self
     
-    def extract_etf_returns(self):
-        """Extract ETF returns from OHLCV data using Close prices"""
-        returns_dict = {}
-        
-        for ticker in self.tickers:
-            # Look for Close price column
-            close_col = f"{ticker}_Close"
-            
-            if close_col in self.raw_data.columns:
-                prices = self.raw_data[close_col]
-                # Calculate returns
-                returns = prices.pct_change()
-                returns_dict[ticker] = returns
-                print(f"Found {ticker} -> {close_col}")
-            else:
-                # Try alternative naming
-                alt_cols = [f"{ticker}_close", f"{ticker}_adj_close", f"{ticker}_price", ticker]
-                found = False
-                for alt in alt_cols:
-                    if alt in self.raw_data.columns:
-                        prices = self.raw_data[alt]
-                        returns = prices.pct_change()
-                        returns_dict[ticker] = returns
-                        print(f"Found {ticker} -> {alt}")
-                        found = True
-                        break
-                
-                if not found:
-                    print(f"Warning: {ticker}_Close not found in data. Using zeros.")
-                    returns_dict[ticker] = pd.Series(0, index=self.raw_data.index)
-        
-        # Create DataFrame
-        etf_returns = pd.DataFrame(returns_dict)
-        etf_returns = etf_returns.dropna()
-        
-        print(f"ETF returns shape: {etf_returns.shape}")
-        return etf_returns
-    
-    def extract_macro_data(self):
-        """Extract macro columns (already in correct format)"""
-        available_macro = [col for col in self.macro_cols if col in self.raw_data.columns]
-        
-        if not available_macro:
-            print(f"Warning: None of macro columns {self.macro_cols} found in data")
-            print(f"Available columns sample: {list(self.raw_data.columns)[:20]}")
-            return pd.DataFrame(index=self.raw_data.index)
-        
-        macro_data = self.raw_data[available_macro].copy()
-        macro_data = macro_data.dropna()
-        
-        print(f"Macro columns found: {available_macro}")
-        print(f"Macro data shape: {macro_data.shape}")
-        
-        return macro_data
-    
-    def align_data(self, etf_returns, macro_data):
-        """Align ETF returns and macro data on common dates"""
-        common_dates = etf_returns.index.intersection(macro_data.index)
-        
-        etf_aligned = etf_returns.loc[common_dates]
-        macro_aligned = macro_data.loc[common_dates]
-        
-        print(f"Aligned data: {len(common_dates)} common dates")
-        
-        return etf_aligned, macro_aligned
-    
-    def create_path_augmentation(self, macro_data):
-        """Create augmented path for signature computation"""
-        if macro_data.empty or len(macro_data) < 2:
-            print("Warning: Insufficient macro data for path augmentation")
-            # Return dummy path
-            return np.zeros((10, len(self.macro_cols) + 1))
-        
-        # Handle NaN values - use ffill/bfill
-        macro_data = macro_data.ffill().bfill().fillna(0)
-        
-        # Standardize macro data
-        macro_scaled = self.scaler.fit_transform(macro_data)
-        macro_scaled = pd.DataFrame(macro_scaled, index=macro_data.index, columns=macro_data.columns)
-        
-        # Add time channel (normalized)
-        t = np.linspace(0, 1, len(macro_scaled)).reshape(-1, 1)
-        macro_with_time = np.hstack([macro_scaled.values, t])
-        
-        return macro_with_time
-    
-    def train_val_test_split(self, X, y):
-        """Split data into train/val/test sets"""
-        n = len(X)
-        
-        if n < 10:
-            print(f"Warning: Only {n} samples, cannot do 80/10/10 split")
-            # Return whatever we have
-            return (X, y), (np.array([]), np.array([])), (np.array([]), np.array([]))
-        
-        train_end = int(n * TRAIN_RATIO)
-        val_end = int(n * (TRAIN_RATIO + VAL_RATIO))
-        
-        X_train = X[:train_end]
-        y_train = y[:train_end]
-        X_val = X[train_end:val_end]
-        y_val = y[train_end:val_end]
-        X_test = X[val_end:]
-        y_test = y[val_end:]
-        
-        print(f"Splits: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}")
-        
-        return (X_train, y_train), (X_val, y_val), (X_test, y_test)
-    
-    def get_data(self):
-        """Main method to get processed data for training"""
-        self.load_data()
-        
-        if self.raw_data is None or len(self.raw_data) == 0:
-            print("Error: No data loaded")
-            return None
-        
-        etf_returns = self.extract_etf_returns()
-        macro_data = self.extract_macro_data()
-        
-        if macro_data.empty:
-            print("Error: No macro data available")
-            return None
-        
-        etf_aligned, macro_aligned = self.align_data(etf_returns, macro_data)
-        
-        if len(etf_aligned) < 10:
-            print(f"Warning: Only {len(etf_aligned)} aligned samples. Training may fail.")
-        
-        # Create path augmentations
-        X = self.create_path_augmentation(macro_aligned)
-        y = etf_aligned.values
-        
-        # Get train/val/test splits
-        splits = self.train_val_test_split(X, y)
-        
-        return {
-            'train': splits[0],
-            'val': splits[1],
-            'test': splits[2],
-            'macro_dates': macro_aligned.index,
-            'etf_dates': etf_aligned.index,
-            'tickers': self.tickers,
-            'benchmark': self.benchmark,
-            'macro_cols': macro_aligned.columns.tolist() if not macro_aligned.empty else []
-        }
-    
     def get_window_data(self, start_year, end_year):
-        """Get data for a specific expanding window"""
+        """Get data for a specific expanding window - FIXED VERSION"""
         self.load_data()
         
-        if self.raw_data is None or len(self.raw_data) == 0:
-            return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
-        
-        # Filter to window period
+        # Filter to window period (start_year to end_year)
         start_date = f"{start_year}-01-01"
         end_date = f"{end_year}-12-31"
-        window_data = self.raw_data.loc[start_date:end_date]
+        window_data = self.raw_data.loc[start_date:end_date].copy()
         
         if len(window_data) == 0:
-            print(f"Warning: No data for window {start_year}-{end_year}")
             return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
         
-        # Extract ETF returns from Close prices
+        # Extract ETF returns
         etf_returns = {}
         for ticker in self.tickers:
             close_col = f"{ticker}_Close"
             if close_col in window_data.columns:
-                prices = window_data[close_col]
+                prices = window_data[close_col].copy()
                 returns = prices.pct_change()
                 etf_returns[ticker] = returns
             else:
-                # Try alternative
-                alt_cols = [f"{ticker}_close", f"{ticker}_adj_close", ticker]
-                found = False
-                for alt in alt_cols:
-                    if alt in window_data.columns:
-                        prices = window_data[alt]
-                        returns = prices.pct_change()
-                        etf_returns[ticker] = returns
-                        found = True
-                        break
-                if not found:
-                    print(f"Warning: {ticker}_Close not found in window data. Using zeros.")
-                    etf_returns[ticker] = pd.Series(0, index=window_data.index)
+                etf_returns[ticker] = pd.Series(0, index=window_data.index)
         
-        etf_returns_df = pd.DataFrame(etf_returns)
-        etf_returns_df = etf_returns_df.dropna()
+        etf_returns_df = pd.DataFrame(etf_returns).dropna()
         
-        # Extract macro
+        # Extract macro data
         available_macro = [col for col in self.macro_cols if col in window_data.columns]
-        macro_df = window_data[available_macro].copy()
-        macro_df = macro_df.dropna()
+        macro_df = window_data[available_macro].copy().dropna()
         
         if macro_df.empty:
-            print(f"Warning: No macro data for window {start_year}-{end_year}")
             return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
         
-        # Align
+        # Align dates
         common_dates = etf_returns_df.index.intersection(macro_df.index)
         etf_aligned = etf_returns_df.loc[common_dates]
         macro_aligned = macro_df.loc[common_dates]
         
-        if len(etf_aligned) < 10:
+        if len(etf_aligned) < 50:
             print(f"Warning: Only {len(etf_aligned)} samples for window {start_year}-{end_year}")
+            return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
         
-        # Handle NaN in macro
-        macro_aligned = macro_aligned.ffill().bfill().fillna(0)
-        
-        X = self.create_path_augmentation(macro_aligned)
+        # Create path augmentation
+        macro_scaled = self.scaler.fit_transform(macro_aligned)
+        t = np.linspace(0, 1, len(macro_scaled)).reshape(-1, 1)
+        X = np.hstack([macro_scaled, t])
         y = etf_aligned.values
         
         return X, y, etf_aligned.index, macro_aligned.index
 
 
 def get_latest_macro_pipeline():
-    """Get latest macro values for display"""
     pipeline = DataPipeline('fi')
     pipeline.load_data()
-    
     latest = {}
     for col in MACRO_COLS:
         if col in pipeline.raw_data.columns:
@@ -305,5 +101,4 @@ def get_latest_macro_pipeline():
             latest[col] = float(val) if not pd.isna(val) else 0.0
         else:
             latest[col] = 0.0
-    
     return latest
