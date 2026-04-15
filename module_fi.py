@@ -35,7 +35,6 @@ class FIModule:
             return None
         
         if start_year:
-            # Filter to specific window
             mask = (data['macro_dates'].year >= start_year) & (data['macro_dates'].year <= end_year)
             if len(data['train'][0]) > 0:
                 data['train'] = (data['train'][0][mask[:len(data['train'][0])]], 
@@ -53,17 +52,20 @@ class FIModule:
         """Train on fixed dataset 2008-2026"""
         self.logger.info("Training FI module on fixed dataset (2008-2026)")
         
-        with Timer() as t:
+        timer = Timer()
+        timer.__enter__()
+        
+        try:
             data = self.get_data()
             
             if data is None:
                 self.logger.error("Failed to load data")
+                timer.__exit__(None, None, None)
                 return None
             
-            # Check if data has enough samples
             if len(data['train'][0]) == 0 or len(data['val'][0]) == 0 or len(data['test'][0]) == 0:
                 self.logger.error("Not enough data for training")
-                self.logger.error(f"Train samples: {len(data['train'][0])}, Val: {len(data['val'][0])}, Test: {len(data['test'][0])}")
+                timer.__exit__(None, None, None)
                 return None
             
             X_train = np.vstack([data['train'][0], data['val'][0]])
@@ -71,18 +73,15 @@ class FIModule:
             
             self.logger.info(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
             
-            # Train ensemble
             model = EnsembleForecaster(depths=[2, 3, 4])
             model.fit(X_train, y_train)
             
-            # Test predictions
             X_test = data['test'][0]
             y_test = data['test'][1]
             predictions = model.predict(X_test)
             
             self.logger.info(f"Predictions shape: {predictions.shape}")
             
-            # Compute metrics - handle both 1D and 2D
             if len(predictions.shape) == 1:
                 pred_series = pd.Series(predictions)
                 y_test_for_metrics = y_test.mean(axis=1) if len(y_test.shape) > 1 else y_test
@@ -92,15 +91,23 @@ class FIModule:
             
             metrics = BenchmarkComparator.compute_performance_metrics(pred_series, pd.Series(y_test_for_metrics))
             
-            self.logger.info(f"FI fixed training complete in {t.minutes:.2f} min")
-            
-            return {
+            result = {
                 'model': model,
                 'predictions': predictions,
                 'y_test': y_test,
                 'metrics': metrics,
                 'dates': data['test'][2] if len(data['test']) > 2 else None
             }
+            
+            timer.__exit__(None, None, None)
+            self.logger.info(f"FI fixed training complete in {timer.minutes:.2f} minutes")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Training failed: {e}")
+            timer.__exit__(None, None, None)
+            return None
     
     def train_shrinking(self, start_years, end_year=2026):
         """Train on expanding windows"""
@@ -112,12 +119,16 @@ class FIModule:
         for start_year in start_years:
             self.logger.info(f"Training window: {start_year} -> {end_year}")
             
-            with Timer() as t:
+            timer = Timer()
+            timer.__enter__()
+            
+            try:
                 pipeline = DataPipeline(module='fi')
-                X, y, dates, _ = pipeline.get_window_data(start_year, end_year)
+                X, y, dates, macro_dates = pipeline.get_window_data(start_year, end_year)
                 
                 if len(X) == 0:
                     self.logger.warning(f"No data for window {start_year}-{end_year}, skipping")
+                    timer.__exit__(None, None, None)
                     continue
                 
                 n = len(X)
@@ -130,17 +141,17 @@ class FIModule:
                 y_val = y[train_end:val_end]
                 X_test = X[val_end:]
                 y_test = y[val_end:]
+                test_dates = dates[val_end:] if len(dates) > val_end else dates
                 
-                # Train model
+                self.logger.info(f"Window {start_year}: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}")
+                
                 model = EnsembleForecaster(depths=[2, 3, 4])
                 X_combined = np.vstack([X_train, X_val])
                 y_combined = np.vstack([y_train, y_val])
                 model.fit(X_combined, y_combined)
                 
-                # Predict on test
                 preds = model.predict(X_test)
                 
-                # Store results
                 window_result = {
                     'start_year': start_year,
                     'end_year': end_year,
@@ -148,15 +159,20 @@ class FIModule:
                     'model': model,
                     'predictions': preds,
                     'actuals': y_test,
-                    'dates': dates[val_end:] if len(dates) > val_end else dates
+                    'dates': test_dates
                 }
                 
                 results.append(window_result)
                 models[start_year] = model
                 
-                self.logger.info(f"Window {start_year} complete in {t.minutes:.2f} min")
+                timer.__exit__(None, None, None)
+                self.logger.info(f"Window {start_year} complete in {timer.minutes:.2f} min")
+                
+            except Exception as e:
+                self.logger.error(f"Window {start_year} failed: {e}")
+                timer.__exit__(None, None, None)
+                continue
         
-        # Compute consensus
         consensus_weights = {'annualized_return': 0.60, 'sharpe_ratio': 0.20, 'max_drawdown': 0.20}
         consensus = ExpandingWindowConsensus(start_years, end_year, consensus_weights)
         
@@ -170,7 +186,6 @@ class FIModule:
         """Generate prediction for next day"""
         predictions = model.predict(X_paths)
         
-        # Handle 1D vs 2D predictions
         if len(predictions.shape) == 1:
             mean_pred = predictions[0] if len(predictions) > 0 else 0
             per_etf_preds = np.ones(len(self.tickers)) * mean_pred
