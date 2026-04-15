@@ -38,20 +38,22 @@ class DataPipeline:
             self.raw_data.set_index('Date', inplace=True)
         
         self.raw_data = self.raw_data.loc[f"{START_YEAR}-01-01":f"{END_YEAR}-12-31"]
-        print(f"Loaded {len(self.raw_data)} rows")
+        print(f"Loaded {len(self.raw_data)} rows from {self.raw_data.index[0]} to {self.raw_data.index[-1]}")
         return self
     
     def get_window_data(self, start_year, end_year):
-        """Get data for a specific expanding window - FIXED VERSION"""
+        """Get data for a specific expanding window"""
         self.load_data()
         
-        # Filter to window period (start_year to end_year)
         start_date = f"{start_year}-01-01"
         end_date = f"{end_year}-12-31"
         window_data = self.raw_data.loc[start_date:end_date].copy()
         
         if len(window_data) == 0:
+            print(f"Warning: No data for window {start_year}-{end_year}")
             return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
+        
+        print(f"Window {start_year}-{end_year}: raw data has {len(window_data)} rows from {window_data.index[0]} to {window_data.index[-1]}")
         
         # Extract ETF returns
         etf_returns = {}
@@ -62,13 +64,16 @@ class DataPipeline:
                 returns = prices.pct_change()
                 etf_returns[ticker] = returns
             else:
+                print(f"Warning: {close_col} not found, using zeros")
                 etf_returns[ticker] = pd.Series(0, index=window_data.index)
         
         etf_returns_df = pd.DataFrame(etf_returns).dropna()
+        print(f"ETF returns after dropna: {len(etf_returns_df)} rows")
         
         # Extract macro data
         available_macro = [col for col in self.macro_cols if col in window_data.columns]
         macro_df = window_data[available_macro].copy().dropna()
+        print(f"Macro data after dropna: {len(macro_df)} rows")
         
         if macro_df.empty:
             return np.array([]), np.array([]), pd.DatetimeIndex([]), pd.DatetimeIndex([])
@@ -77,6 +82,8 @@ class DataPipeline:
         common_dates = etf_returns_df.index.intersection(macro_df.index)
         etf_aligned = etf_returns_df.loc[common_dates]
         macro_aligned = macro_df.loc[common_dates]
+        
+        print(f"Aligned data: {len(common_dates)} rows from {common_dates[0]} to {common_dates[-1]}")
         
         if len(etf_aligned) < 50:
             print(f"Warning: Only {len(etf_aligned)} samples for window {start_year}-{end_year}")
