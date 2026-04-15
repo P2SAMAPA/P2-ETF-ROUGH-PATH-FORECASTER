@@ -1,5 +1,5 @@
 """
-Fixed Income / Commodities Module for ROUGH-PATH-FORECASTER
+Fixed Income / Commodities Module for ROUGH-PATH-FORECASTER - DEBUG VERSION
 """
 
 import numpy as np
@@ -50,12 +50,22 @@ class FIModule:
                 
                 self.logger.info(f"Window {start_year}: train={len(X_train)}, test={len(X_test)}")
                 
+                # DEBUG: Print y_test info
+                print(f"\n=== DEBUG FI Window {start_year} ===")
+                print(f"y_test shape: {y_test.shape}")
+                print(f"y_test first 3 rows:\n{y_test[:3]}")
+                print(f"y_test mean per row (first 5): {y_test.mean(axis=1)[:5]}")
+                print(f"y_test std per row (first 5): {y_test.std(axis=1)[:5]}")
+                
                 model = EnsembleForecaster(depths=[2, 3, 4])
                 model.fit(X_train, y_train)
                 preds = model.predict(X_test).copy()
                 
-                # Calculate metrics immediately
+                # Calculate metrics
                 returns = y_test.mean(axis=1) if len(y_test.shape) > 1 else y_test
+                print(f"Returns (mean across ETFs) first 5: {returns[:5]}")
+                print(f"Returns min: {returns.min():.6f}, max: {returns.max():.6f}, std: {returns.std():.6f}")
+                
                 ann_return = np.mean(returns) * 252
                 ann_vol = np.std(returns) * np.sqrt(252)
                 sharpe = ann_return / ann_vol if ann_vol > 0 else 0
@@ -67,7 +77,7 @@ class FIModule:
                 
                 hit_rate = np.mean(returns > 0) * 100
                 
-                self.logger.info(f"Window {start_year}: Days={len(X_test)}, Max DD={max_dd:.2f}%, Return={ann_return*100:.2f}%")
+                self.logger.info(f"Window {start_year}: Days={len(X_test)}, Max DD={max_dd:.2f}%, Vol={ann_vol*100:.2f}%")
                 
                 results.append({
                     'start_year': start_year,
@@ -78,6 +88,7 @@ class FIModule:
                     'actuals': y_test,
                     'dates': test_dates,
                     'ann_return_pct': ann_return * 100,
+                    'ann_vol_pct': ann_vol * 100,
                     'max_drawdown_pct': max_dd,
                     'sharpe': sharpe,
                     'hit_rate_pct': hit_rate
@@ -89,6 +100,8 @@ class FIModule:
                 
             except Exception as e:
                 self.logger.error(f"Window {start_year} failed: {e}")
+                import traceback
+                traceback.print_exc()
                 timer.__exit__(None, None, None)
                 continue
         
