@@ -20,6 +20,85 @@ from selection import ETFSelector
 from utils import Logger, Timer, GitHubActionsHelpers
 
 
+def compute_max_drawdown(returns_series):
+    """
+    Compute maximum drawdown for a series of returns
+    Returns a positive percentage value (e.g., 25.0 for 25% drawdown)
+    """
+    if len(returns_series) == 0:
+        return 0.0
+    
+    # Calculate cumulative returns
+    cumulative = (1 + returns_series).cumprod()
+    
+    # Calculate running maximum
+    running_max = cumulative.expanding().max()
+    
+    # Calculate drawdown
+    drawdown = (cumulative - running_max) / running_max
+    
+    # Return the maximum drawdown as a positive percentage
+    max_dd = abs(drawdown.min()) if not pd.isna(drawdown.min()) else 0.0
+    
+    return max_dd
+
+
+def compute_per_window_metrics(actuals_series, start_year):
+    """
+    Compute all performance metrics for a single window
+    actuals_series: pandas Series of returns with datetime index
+    """
+    if len(actuals_series) < 5:
+        return {
+            'start_year': start_year,
+            'n_days': len(actuals_series),
+            'ann_return_pct': 0.0,
+            'ann_vol_pct': 0.0,
+            'sharpe': 0.0,
+            'max_drawdown_pct': 0.0,
+            'hit_rate_pct': 0.0,
+            'ann_alpha_pct': 0.0,
+            'positive_years': 0
+        }
+    
+    # Annualized return (assuming 252 trading days)
+    ann_return = actuals_series.mean() * 252
+    
+    # Annualized volatility
+    ann_vol = actuals_series.std() * np.sqrt(252)
+    
+    # Sharpe ratio
+    sharpe = ann_return / ann_vol if ann_vol > 0 else 0.0
+    
+    # Maximum drawdown - this is the key fix
+    max_dd = compute_max_drawdown(actuals_series)
+    
+    # Hit rate
+    hit_rate = (actuals_series > 0).mean()
+    
+    # Alpha (excess return over 3% risk-free rate)
+    ann_alpha = ann_return - 0.03
+    
+    # Count positive years
+    if len(actuals_series) > 0 and hasattr(actuals_series.index, 'year'):
+        yearly_returns = actuals_series.groupby(actuals_series.index.year).mean()
+        positive_years = (yearly_returns > 0).sum()
+    else:
+        positive_years = 0
+    
+    return {
+        'start_year': start_year,
+        'n_days': len(actuals_series),
+        'ann_return_pct': ann_return * 100,
+        'ann_vol_pct': ann_vol * 100,
+        'sharpe': sharpe,
+        'max_drawdown_pct': max_dd * 100,
+        'hit_rate_pct': hit_rate * 100,
+        'ann_alpha_pct': ann_alpha * 100,
+        'positive_years': positive_years
+    }
+
+
 def compute_consensus_picks(window_results, module, start_years):
     """
     Compute consensus picks across all windows using weighted scoring
@@ -27,7 +106,6 @@ def compute_consensus_picks(window_results, module, start_years):
     tickers = module.tickers
     benchmark = module.benchmark
     
-    # Collect picks from each window
     window_picks = []
     window_convictions = []
     window_metrics = []
@@ -35,70 +113,68 @@ def compute_consensus_picks(window_results, module, start_years):
     for i, result in enumerate(window_results):
         start_year = start_years[i]
         
-        # Get last prediction from this window
-        if len(result['predictions']) > 0:
-            last_pred = result['predictions']
-            if len(last_pred.shape) > 1:
-                last_pred = last_pred[-1] if len(last_pred) > 0 else last_pred.mean(axis=0)
-            else:
-                last_pred = last_pred[-1] if len(last_pred) > 0 else last_pred
-            
-            # Ensure 1D
-            if isinstance(last_pred, (int, float)):
-                last_pred = np.ones(len(tickers)) * last_pred
-            elif len(last_pred.shape) > 1:
-                last_pred = last_pred.flatten()
-            
-            # Get top pick
-            selector = ETFSelector(tickers, benchmark)
-            scores = selector.compute_net_scores(last_pred[:len(tickers)])
-            top_pick = scores.iloc[0]['ticker']
-            top_conviction = scores.iloc[0]['conviction']
-            
-            window_picks.append(top_pick)
-            window_convictions.append(top_conviction)
-            
-            # Compute window metrics from actuals
-            actuals = result['actuals']
-            if len(actuals) > 0:
-                # Convert to pandas Series for calculations
-                if isinstance(actuals, np.ndarray):
-                    if len(actuals.shape) > 1:
-                        # Use mean across ETFs for metrics
-                        actuals_series = pd.Series(actuals.mean(axis=1))
-                    else:
-                        actuals_series = pd.Series(actuals)
+        predictions = result['predictions']
+        actuals = result['actuals']
+        dates = result.get('dates', None)
+        
+        if len(predictions) == 0 or len(actuals) == 0:
+            continue
+        
+        # Get most recent prediction for this window
+        if len(predictions.shape) > 1:
+            last_pred = predictions[-1] if len(predictions) > 0 else predictions.mean(axis=0)
+        else:
+            last_pred = predictions[-1] if len(predictions) > 0 else predictions
+        
+        # Ensure 1D array
+        if isinstance(last_pred, (int, float)):
+            last_pred = np.ones(len(tickers)) * last_pred
+        elif len(last_pred.shape) > 1:
+            last_pred = last_pred.flatten()
+        
+        # Trim or pad
+        if len(last_pred) > len(tickers):
+            last_pred = last_pred[:len(tickers)]
+        elif len(last_pred) < len(tickers):
+            last_pred = np.pad(last_pred, (0, len(tickers) - len(last_pred)))
+        
+        # Get top pick for this window
+        selector = ETFSelector(tickers, benchmark)
+        scores = selector.compute_net_scores(last_pred[:len(tickers)])
+        top_pick = scores.iloc[0]['ticker']
+        top_conviction = scores.iloc[0]['conviction']
+        
+        window_picks.append(top_pick)
+        window_convictions.append(top_conviction)
+        
+        # Compute metrics using actual returns for this window's test set
+        if len(actuals) > 0:
+            # Convert actuals to pandas Series
+            if isinstance(actuals, np.ndarray):
+                if len(actuals.shape) > 1:
+                    # Use mean return across ETFs for strategy performance
+                    actuals_series = pd.Series(actuals.mean(axis=1))
                 else:
                     actuals_series = pd.Series(actuals)
-                
-                ann_return = actuals_series.mean() * 252
-                ann_vol = actuals_series.std() * np.sqrt(252)
-                sharpe = ann_return / ann_vol if ann_vol > 0 else 0
-                
-                # Max drawdown calculation using pandas
-                cumulative = (1 + actuals_series).cumprod()
-                running_max = cumulative.expanding().max()
-                drawdown = (cumulative - running_max) / running_max
-                max_dd = drawdown.min()
-                
-                window_metrics.append({
-                    'start_year': start_year,
-                    'ann_return_pct': ann_return * 100,
-                    'ann_vol_pct': ann_vol * 100,
-                    'sharpe': sharpe,
-                    'max_drawdown_pct': max_dd * 100 if not np.isnan(max_dd) else 0
-                })
+            else:
+                actuals_series = pd.Series(actuals)
+            
+            # Add datetime index if dates available
+            if dates is not None and len(dates) == len(actuals_series):
+                actuals_series.index = pd.DatetimeIndex(dates)
+            
+            # Calculate metrics for this specific window
+            metrics = compute_per_window_metrics(actuals_series, start_year)
+            window_metrics.append(metrics)
     
-    # Count picks for consensus
-    pick_counts = Counter(window_picks)
-    
-    # Weighted consensus by conviction
+    # Build consensus
     weighted_picks = {}
     for pick, conv in zip(window_picks, window_convictions):
         weighted_picks[pick] = weighted_picks.get(pick, 0) + conv
     
-    # Top picks
     sorted_picks = sorted(weighted_picks.items(), key=lambda x: x[1], reverse=True)
+    
+    window_metrics_df = pd.DataFrame(window_metrics) if window_metrics else pd.DataFrame()
     
     consensus = {
         'consensus_pick': sorted_picks[0][0] if sorted_picks else None,
@@ -107,8 +183,8 @@ def compute_consensus_picks(window_results, module, start_years):
         'third_pick': sorted_picks[2][0] if len(sorted_picks) > 2 else None,
         'window_picks': window_picks,
         'window_convictions': window_convictions,
-        'window_metrics': pd.DataFrame(window_metrics) if window_metrics else pd.DataFrame(),
-        'pick_counts': dict(pick_counts)
+        'window_metrics': window_metrics_df,
+        'pick_counts': dict(Counter(window_picks))
     }
     
     return consensus
@@ -116,15 +192,13 @@ def compute_consensus_picks(window_results, module, start_years):
 
 def main():
     parser = argparse.ArgumentParser(description="Train shrinking windows model")
-    parser.add_argument("--module", type=str, required=True, choices=['fi', 'equity'],
-                        help="Module to train: fi or equity")
+    parser.add_argument("--module", type=str, required=True, choices=['fi', 'equity'])
     args = parser.parse_args()
     
     logger = Logger(f"Train-Shrinking-{args.module.upper()}")
     logger.info(f"Training {len(SHRINKING_START_YEARS)} shrinking windows")
     
     is_ci = GitHubActionsHelpers.is_github_actions()
-    
     timer = Timer()
     timer.__enter__()
     
@@ -138,18 +212,16 @@ def main():
             result = module.train_shrinking(SHRINKING_START_YEARS, SHRINKING_END_YEAR)
             save_dir = "models_saved/equity/shrinking"
         
-        # Create save directory
         os.makedirs(save_dir, exist_ok=True)
         
-        # Compute consensus picks
+        # Compute consensus with proper per-window metrics
         consensus = compute_consensus_picks(result['windows'], module, SHRINKING_START_YEARS)
         
-        # Save each window model
+        # Save models
         for start_year, model in result['models'].items():
             model_path = os.path.join(save_dir, f"model_window_{start_year}.pkl")
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
-            logger.info(f"Saved model for window {start_year}")
         
         # Save window results
         window_results_list = []
@@ -159,10 +231,8 @@ def main():
                 'end_year': w['end_year'],
                 'n_days': w['n_days']
             })
-        
         window_results_df = pd.DataFrame(window_results_list)
-        window_results_path = os.path.join(save_dir, "window_results.parquet")
-        ParquetWriter.write_window_results(window_results_df, window_results_path)
+        ParquetWriter.write_window_results(window_results_df, os.path.join(save_dir, "window_results.parquet"))
         
         # Save consensus
         consensus_df = pd.DataFrame([{
@@ -171,22 +241,20 @@ def main():
             'second_pick': consensus['second_pick'],
             'third_pick': consensus['third_pick']
         }])
-        consensus_path = os.path.join(save_dir, "consensus.parquet")
-        ParquetWriter.write_predictions(consensus_df, consensus_path)
+        ParquetWriter.write_predictions(consensus_df, os.path.join(save_dir, "consensus.parquet"))
         
         # Save window picks
-        window_picks_df = pd.DataFrame({
-            'start_year': SHRINKING_START_YEARS[:len(consensus['window_picks'])],
-            'pick': consensus['window_picks'],
-            'conviction': consensus['window_convictions']
-        })
-        window_picks_path = os.path.join(save_dir, "window_picks.parquet")
-        ParquetWriter.write_predictions(window_picks_df, window_picks_path)
+        if len(consensus['window_picks']) > 0:
+            window_picks_df = pd.DataFrame({
+                'start_year': SHRINKING_START_YEARS[:len(consensus['window_picks'])],
+                'pick': consensus['window_picks'],
+                'conviction': consensus['window_convictions']
+            })
+            ParquetWriter.write_predictions(window_picks_df, os.path.join(save_dir, "window_picks.parquet"))
         
-        # Save metrics
+        # Save window metrics (now each window has its own unique values)
         if not consensus['window_metrics'].empty:
-            metrics_path = os.path.join(save_dir, "window_metrics.parquet")
-            ParquetWriter.write_predictions(consensus['window_metrics'], metrics_path)
+            ParquetWriter.write_predictions(consensus['window_metrics'], os.path.join(save_dir, "window_metrics.parquet"))
         
         timer.__exit__(None, None, None)
         logger.info(f"Shrinking windows training completed in {timer.minutes:.2f} minutes")
