@@ -39,71 +39,201 @@ COLORS = {
     "divider": "#e8eaed"
 }
 
-# Custom CSS
-st.markdown(f"""
+# Custom CSS - properly formatted with no f-string errors
+st.markdown("""
 <style>
-    .stApp {{ background-color: {COLORS["bg_light"]}; }}
-    h1, h2, h3, h4, h5 {{ color: {COLORS["text_primary"]} !important; font-weight: 600 !important; }}
+    .stApp {
+        background-color: #f8f9fa;
+    }
     
-    .hero-wrapper {{
-        background: {COLORS["bg_white"]};
+    h1, h2, h3, h4, h5 {
+        color: #202124 !important;
+        font-weight: 600 !important;
+    }
+    
+    .hero-wrapper {
+        background: #ffffff;
         border-radius: 16px;
-        border: 1px solid {COLORS["border"]};
+        border: 1px solid #dadce0;
         overflow: hidden;
         margin: 16px 0;
         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }}
-    .hero-container {{ display: flex; background: {COLORS["bg_white"]}; padding: 0; }}
-    .hero-divider {{ width: 1px; background: {COLORS["divider"]}; margin: 16px 0; }}
-    .hero-section {{ flex: 1; text-align: center; padding: 20px; }}
-    .hero-section-main {{ flex: 2; text-align: center; padding: 24px 20px; }}
-    .hero-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: {COLORS["text_muted"]}; margin-bottom: 8px; }}
-    .hero-etf-main {{ font-size: 48px; font-weight: 700; color: {COLORS["primary"]}; letter-spacing: 1px; }}
-    .hero-etf-secondary {{ font-size: 28px; font-weight: 600; color: {COLORS["text_primary"]}; }}
-    .hero-return {{ font-size: 20px; font-weight: 600; margin-top: 8px; color: {COLORS["positive_bright"]}; }}
-    .hero-bps {{ font-size: 14px; font-weight: 400; opacity: 0.8; }}
-    .hero-predictability {{ margin-top: 8px; font-size: 12px; color: {COLORS["text_secondary"]}; }}
+    }
     
-    .details-section {{
-        background: {COLORS["bg_white"]};
+    .hero-container {
+        display: flex;
+        background: #ffffff;
+        padding: 0;
+    }
+    
+    .hero-divider {
+        width: 1px;
+        background: #e8eaed;
+        margin: 16px 0;
+    }
+    
+    .hero-section {
+        flex: 1;
+        text-align: center;
+        padding: 20px;
+    }
+    
+    .hero-section-main {
+        flex: 2;
+        text-align: center;
+        padding: 24px 20px;
+    }
+    
+    .hero-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #80868b;
+        margin-bottom: 8px;
+    }
+    
+    .hero-etf-main {
+        font-size: 48px;
+        font-weight: 700;
+        color: #1a73e8;
+        letter-spacing: 1px;
+    }
+    
+    .hero-etf-secondary {
+        font-size: 28px;
+        font-weight: 600;
+        color: #202124;
+    }
+    
+    .hero-return {
+        font-size: 20px;
+        font-weight: 600;
+        margin-top: 8px;
+        color: #90EE90;
+    }
+    
+    .hero-bps {
+        font-size: 14px;
+        font-weight: 400;
+        opacity: 0.8;
+    }
+    
+    .hero-predictability {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #5f6368;
+    }
+    
+    .details-section {
+        background: #ffffff;
         border-radius: 12px;
         padding: 16px 20px;
         margin: 16px 0;
-        border: 1px solid {COLORS["border"]};
-    }}
-    .detail-row {{ display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid {COLORS["divider"]}; }}
-    .detail-row:last-child {{ border-bottom: none; }}
-    .detail-label {{ font-weight: 500; color: {COLORS["text_secondary"]}; }}
-    .detail-value {{ font-weight: 600; color: {COLORS["text_primary"]}; }}
+        border: 1px solid #dadce0;
+    }
     
-    .macro-container {{ display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }}
-    .macro-pill {{
-        background: {COLORS["bg_light"]};
+    .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #e8eaed;
+    }
+    
+    .detail-row:last-child {
+        border-bottom: none;
+    }
+    
+    .detail-label {
+        font-weight: 500;
+        color: #5f6368;
+    }
+    
+    .detail-value {
+        font-weight: 600;
+        color: #202124;
+    }
+    
+    .macro-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 16px 0;
+    }
+    
+    .macro-pill {
+        background: #f8f9fa;
         border-radius: 20px;
         padding: 8px 16px;
         font-size: 13px;
-        border: 1px solid {COLORS["border"]};
-        color: {COLORS["text_primary"]};
-    }}
-    .macro-pill strong {{ color: {COLORS["primary"]}; margin-left: 8px; font-weight: 600; }}
+        border: 1px solid #dadce0;
+        color: #202124;
+    }
     
-    .metrics-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 16px 0; }}
-    .metric-card {{
-        background: {COLORS["bg_white"]};
+    .macro-pill strong {
+        color: #1a73e8;
+        margin-left: 8px;
+        font-weight: 600;
+    }
+    
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin: 16px 0;
+    }
+    
+    .metric-card {
+        background: #ffffff;
         border-radius: 12px;
         padding: 16px;
         text-align: center;
-        border: 1px solid {COLORS["border"]};
-    }}
-    .metric-value {{ font-size: 28px; font-weight: 700; color: {COLORS["text_primary"]}; }}
-    .metric-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: {COLORS["text_muted"]}; margin-top: 4px; }}
+        border: 1px solid #dadce0;
+    }
     
-    .dataframe {{ width: 100%; border-collapse: collapse; }}
-    .dataframe th {{ background: {COLORS["bg_light"]}; padding: 10px; text-align: left; font-weight: 600; border: 1px solid {COLORS["border"]}; }}
-    .dataframe td {{ padding: 8px 10px; border: 1px solid {COLORS["border"]}; }}
+    .metric-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: #202124;
+    }
     
-    hr {{ margin: 24px 0; border: none; border-top: 1px solid {COLORS["divider"]; }}
-    .info-text {{ font-size: 12px; color: {COLORS["text_muted"]}; text-align: center; margin: 16px 0; }}
+    .metric-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #80868b;
+        margin-top: 4px;
+    }
+    
+    .dataframe {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .dataframe th {
+        background: #f8f9fa;
+        padding: 10px;
+        text-align: left;
+        font-weight: 600;
+        border: 1px solid #dadce0;
+    }
+    
+    .dataframe td {
+        padding: 8px 10px;
+        border: 1px solid #dadce0;
+    }
+    
+    hr {
+        margin: 24px 0;
+        border: none;
+        border-top: 1px solid #e8eaed;
+    }
+    
+    .info-text {
+        font-size: 12px;
+        color: #80868b;
+        text-align: center;
+        margin: 16px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -199,23 +329,26 @@ def display_metrics_grid(metrics):
     if not metrics:
         return ""
     
+    positive_color = "#0d7c3f"
+    negative_color = "#dc3545"
+    
     html = '<div class="metrics-grid">'
     
     ann_return = metrics.get('annualized_return_pct', 0)
-    color = COLORS["positive"] if ann_return > 0 else COLORS["negative"]
+    color = positive_color if ann_return > 0 else negative_color
     html += f'<div class="metric-card"><div class="metric-value" style="color:{color}">{ann_return:.1f}%</div><div class="metric-label">ANNUALIZED RETURN</div></div>'
     
     sharpe = metrics.get('sharpe_ratio', 0)
     html += f'<div class="metric-card"><div class="metric-value">{sharpe:.2f}</div><div class="metric-label">SHARPE RATIO</div></div>'
     
     max_dd = metrics.get('max_drawdown_pct', 0)
-    html += f'<div class="metric-card"><div class="metric-value" style="color:{COLORS["negative"]}">{max_dd:.1f}%</div><div class="metric-label">MAX DRAWDOWN</div></div>'
+    html += f'<div class="metric-card"><div class="metric-value" style="color:{negative_color}">{max_dd:.1f}%</div><div class="metric-label">MAX DRAWDOWN</div></div>'
     
     hit_rate = metrics.get('hit_rate_pct', 0)
     html += f'<div class="metric-card"><div class="metric-value">{hit_rate:.1f}%</div><div class="metric-label">HIT RATE</div></div>'
     
     alpha = metrics.get('alpha_vs_benchmark_pct', 0)
-    color = COLORS["positive"] if alpha > 0 else COLORS["negative"]
+    color = positive_color if alpha > 0 else negative_color
     html += f'<div class="metric-card"><div class="metric-value" style="color:{color}">{alpha:.1f}%</div><div class="metric-label">ALPHA VS BM</div></div>'
     
     ann_vol = metrics.get('annualized_vol_pct', 0)
@@ -236,8 +369,17 @@ def load_fixed_predictions(module, tickers):
         )
         df = pd.read_parquet(path)
         
-        # Case 1: Single column 'predicted_return' or first column
-        if 'predicted_return' in df.columns:
+        # Multi-column case: each column is an ETF prediction
+        if len(df.shape) == 2 and df.shape[1] > 1:
+            if len(df) > 0:
+                last_row = df.iloc[-1].values
+                if len(last_row) >= len(tickers):
+                    pred_returns = last_row[:len(tickers)]
+                else:
+                    pred_returns = np.pad(last_row, (0, len(tickers) - len(last_row)))
+            else:
+                pred_returns = np.zeros(len(tickers))
+        elif 'predicted_return' in df.columns:
             pred_returns = df['predicted_return'].values
             if len(pred_returns) != len(tickers):
                 last_pred = pred_returns[-1] if len(pred_returns) > 0 else 0
@@ -248,14 +390,7 @@ def load_fixed_predictions(module, tickers):
                 last_pred = pred_returns[-1] if len(pred_returns) > 0 else 0
                 pred_returns = np.ones(len(tickers)) * last_pred
         else:
-            if len(df) > 0:
-                last_row = df.iloc[-1].values
-                if len(last_row) >= len(tickers):
-                    pred_returns = last_row[:len(tickers)]
-                else:
-                    pred_returns = np.pad(last_row, (0, len(tickers) - len(last_row)))
-            else:
-                pred_returns = np.zeros(len(tickers))
+            pred_returns = np.zeros(len(tickers))
         
         return np.array(pred_returns)
     except Exception as e:
@@ -358,13 +493,12 @@ def main():
         equity_tickers = metadata.get('universes', {}).get('equity', {}).get('tickers', equity_tickers)
     
     macro_values = {"VIX": 19.49, "T10Y2Y": 0.5, "HY_SPREAD": 2.9, "IG_SPREAD": 0.83, "DXY": 120.66}
-    next_trading_day = get_next_trading_day()
     
     tab1, tab2 = st.tabs(["🏦 Fixed Income / Commodities", "📊 Equity"])
     
     with tab1:
         st.markdown("### Fixed Income / Commodities")
-        st.markdown(f"<small>Benchmark: AGG (not traded · no CASH output)</small>", unsafe_allow_html=True)
+        st.markdown("<small>Benchmark: AGG (not traded · no CASH output)</small>", unsafe_allow_html=True)
         st.markdown("---")
         st.markdown("#### OPTION A — FULL DATASET (2008-PRESENT)")
         
@@ -439,7 +573,7 @@ def main():
     
     with tab2:
         st.markdown("### Equity")
-        st.markdown(f"<small>Benchmark: SPY (not traded · no CASH output)</small>", unsafe_allow_html=True)
+        st.markdown("<small>Benchmark: SPY (not traded · no CASH output)</small>", unsafe_allow_html=True)
         st.markdown("---")
         st.markdown("#### OPTION A — FULL DATASET (2008-PRESENT)")
         
