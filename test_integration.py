@@ -34,9 +34,10 @@ class TestTrainPredictIntegration(unittest.TestCase):
         n_samples = 50
         path_length = 20
         n_features = 5
+        n_etfs = 3
         
         X_paths = [np.random.randn(path_length, n_features) for _ in range(n_samples)]
-        y_returns = np.random.randn(n_samples, 3)  # 3 ETFs
+        y_returns = np.random.randn(n_samples, n_etfs)  # 3 ETFs
         
         # Train
         model = EnsembleForecaster(depths=[2, 3])
@@ -48,11 +49,13 @@ class TestTrainPredictIntegration(unittest.TestCase):
         
         # Check predictions shape
         self.assertEqual(len(predictions), 5)
+        self.assertEqual(predictions.shape[1], n_etfs)
         self.assertIsInstance(predictions, np.ndarray)
         
-        # Test single prediction
+        # Test single prediction - returns array of predictions for each ETF
         single_pred = model.predict_single(test_paths[0])
-        self.assertIsInstance(single_pred, float)
+        self.assertIsInstance(single_pred, np.ndarray)
+        self.assertEqual(len(single_pred), n_etfs)
 
 
 class TestOutputGeneration(unittest.TestCase):
