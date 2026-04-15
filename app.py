@@ -99,8 +99,8 @@ st.markdown(f"""
     .metric-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: {COLORS["text_muted"]}; margin-top: 4px; }}
     
     .dataframe {{ width: 100%; border-collapse: collapse; }}
-    .dataframe th {{ background: {COLORS["bg_light"]}; padding: 10px; text-align: left; font-weight: 600; border: 1px solid {COLORS["border"]; }}
-    .dataframe td {{ padding: 8px 10px; border: 1px solid {COLORS["border"]; }}
+    .dataframe th {{ background: {COLORS["bg_light"]}; padding: 10px; text-align: left; font-weight: 600; border: 1px solid {COLORS["border"]}; }}
+    .dataframe td {{ padding: 8px 10px; border: 1px solid {COLORS["border"]}; }}
     
     hr {{ margin: 24px 0; border: none; border-top: 1px solid {COLORS["divider"]; }}
     .info-text {{ font-size: 12px; color: {COLORS["text_muted"]}; text-align: center; margin: 16px 0; }}
@@ -240,32 +240,25 @@ def load_fixed_predictions(module, tickers):
         if 'predicted_return' in df.columns:
             pred_returns = df['predicted_return'].values
             if len(pred_returns) != len(tickers):
-                # If length doesn't match, it might be time series of mean predictions
-                # Use the last value as the prediction for all tickers
                 last_pred = pred_returns[-1] if len(pred_returns) > 0 else 0
                 pred_returns = np.ones(len(tickers)) * last_pred
         elif df.shape[1] == 1:
-            # Single column without name
             pred_returns = df.iloc[:, 0].values
             if len(pred_returns) != len(tickers):
                 last_pred = pred_returns[-1] if len(pred_returns) > 0 else 0
                 pred_returns = np.ones(len(tickers)) * last_pred
         else:
-            # Multi-column case: each column is an ETF prediction
-            # Get the last row (most recent prediction)
             if len(df) > 0:
                 last_row = df.iloc[-1].values
                 if len(last_row) >= len(tickers):
                     pred_returns = last_row[:len(tickers)]
                 else:
-                    # Pad with zeros
                     pred_returns = np.pad(last_row, (0, len(tickers) - len(last_row)))
             else:
                 pred_returns = np.zeros(len(tickers))
         
         return np.array(pred_returns)
     except Exception as e:
-        st.caption(f"Load error: {e}")
         return None
 
 
@@ -357,7 +350,6 @@ def main():
     
     st.markdown("---")
     
-    # Get tickers
     fi_tickers = ['TLT', 'LQD', 'HYG', 'VNQ', 'GLD', 'SLV', 'VCIT']
     equity_tickers = ['QQQ', 'XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLY', 'XLP', 'XLU', 'XLRE', 'XLB', 'GDX', 'XME', 'IWM']
     
@@ -396,7 +388,10 @@ def main():
             scores_data = []
             for i, ticker in enumerate(fi_tickers):
                 ret = pred_returns_bps[i]
-                conv = max(0, min(100, (ret - pred_returns_bps.min()) / (pred_returns_bps.max() - pred_returns_bps.min() + 1e-6) * 100))
+                if pred_returns_bps.max() - pred_returns_bps.min() > 1e-6:
+                    conv = (ret - pred_returns_bps.min()) / (pred_returns_bps.max() - pred_returns_bps.min()) * 100
+                else:
+                    conv = 50.0
                 scores_data.append({'ticker': ticker, 'predicted_return': f"{ret:.2f}%", 'conviction': f"{conv:.1f}%"})
             
             scores_df = pd.DataFrame(scores_data).sort_values('predicted_return', ascending=False)
@@ -467,7 +462,10 @@ def main():
             scores_data_eq = []
             for i, ticker in enumerate(equity_tickers):
                 ret = pred_returns_bps_eq[i]
-                conv = max(0, min(100, (ret - pred_returns_bps_eq.min()) / (pred_returns_bps_eq.max() - pred_returns_bps_eq.min() + 1e-6) * 100))
+                if pred_returns_bps_eq.max() - pred_returns_bps_eq.min() > 1e-6:
+                    conv = (ret - pred_returns_bps_eq.min()) / (pred_returns_bps_eq.max() - pred_returns_bps_eq.min()) * 100
+                else:
+                    conv = 50.0
                 scores_data_eq.append({'ticker': ticker, 'predicted_return': f"{ret:.2f}%", 'conviction': f"{conv:.1f}%"})
             
             scores_df_eq = pd.DataFrame(scores_data_eq).sort_values('predicted_return', ascending=False)
