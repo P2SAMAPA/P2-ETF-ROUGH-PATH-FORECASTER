@@ -101,8 +101,11 @@ class EnsembleForecaster:
         return ensemble_pred
     
     def predict_single(self, X_path):
-        """Predict for a single path"""
-        return self.predict([X_path])[0]
+        """
+        Predict for a single path - returns 1D array of predictions per ETF
+        """
+        result = self.predict([X_path])
+        return result[0]  # Returns 1D array of shape (n_etfs,)
 
 
 class ModelRegistry:
@@ -114,7 +117,9 @@ class ModelRegistry:
         os.makedirs(save_dir, exist_ok=True)
     
     def save(self, model, module, mode, window_start=None):
+        """Save model to disk"""
         import pickle
+        
         if window_start:
             filename = f"{self.save_dir}/{module}_{mode}_window_{window_start}.pkl"
         else:
@@ -122,10 +127,13 @@ class ModelRegistry:
         
         with open(filename, 'wb') as f:
             pickle.dump(model, f)
+        
         return filename
     
     def load(self, module, mode, window_start=None):
+        """Load model from disk"""
         import pickle
+        
         if window_start:
             filename = f"{self.save_dir}/{module}_{mode}_window_{window_start}.pkl"
         else:
@@ -136,3 +144,36 @@ class ModelRegistry:
                 return pickle.load(f)
         except FileNotFoundError:
             return None
+    
+    def delete(self, module, mode, window_start=None):
+        """Delete saved model"""
+        import os
+        
+        if window_start:
+            filename = f"{self.save_dir}/{module}_{mode}_window_{window_start}.pkl"
+        else:
+            filename = f"{self.save_dir}/{module}_{mode}.pkl"
+        
+        if os.path.exists(filename):
+            os.remove(filename)
+            return True
+        return False
+    
+    def list_models(self, module=None, mode=None):
+        """List all saved models"""
+        import os
+        import glob
+        
+        pattern = f"{self.save_dir}/*.pkl"
+        if module:
+            pattern = f"{self.save_dir}/{module}_*.pkl"
+        if mode and module:
+            pattern = f"{self.save_dir}/{module}_{mode}_*.pkl"
+        
+        files = glob.glob(pattern)
+        models = []
+        for f in files:
+            basename = os.path.basename(f)
+            models.append(basename.replace('.pkl', ''))
+        
+        return models
