@@ -56,4 +56,4 @@ universes:
     tickers: ["TLT", "LQD", "HYG", "VNQ", "GLD", "SLV", "VCIT"]
   equity:
     benchmark: "SPY"
-    tickers: ["SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLRE", "XLB", "GDX", "XME", "IWM"]
+    tickers: ["SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLRE", "XLB", "GDX", "XME", "IWF", "XSD", "XBI", "IWM"]
