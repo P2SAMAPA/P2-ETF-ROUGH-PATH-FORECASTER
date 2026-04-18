@@ -9,48 +9,69 @@ jobs:
   forecast:
     runs-on: ubuntu-latest
     timeout-minutes: 55
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-    
+
     - name: Cache pip packages
       uses: actions/cache@v3
       with:
         path: ~/.cache/pip
         key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: ${{ runner.os }}-pip-
-    
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
     - name: Cache HF datasets
       uses: actions/cache@v3
       with:
         path: ~/.cache/huggingface
         key: ${{ runner.os }}-hf-cache
-    
+        restore-keys: |
+          ${{ runner.os }}-hf-cache
+
     - name: Install dependencies
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
-    
+
+    - name: Download model from Hugging Face Hub
+      run: |
+        # Create the target directory
+        mkdir -p models_saved/fi/fixed
+        
+        # Download the model file using huggingface_hub
+        python -c "
+        from huggingface_hub import hf_hub_download
+        hf_hub_download(
+            repo_id='P2SAMAPA/p2-etf-rough-path-forecaster-results',
+            filename='fi/fixed/model.pkl',
+            local_dir='./',
+            local_dir_use_symlinks=False
+        )
+        "
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
     - name: Run FI predictions
       run: python predict.py --module fi
       env:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
-    
+
     - name: Run Equity predictions
       run: python predict.py --module equity
       env:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
-    
+
     - name: Upload to Hub
       run: python upload_to_hub.py
       env:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
-    
+
     - name: Clean cache
       run: |
         rm -rf data/cache/*
