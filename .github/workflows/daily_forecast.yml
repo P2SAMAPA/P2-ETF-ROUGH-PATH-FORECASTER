@@ -39,20 +39,26 @@ jobs:
         pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Download model from Hugging Face Hub
+    - name: Download models from Hugging Face Hub
       run: |
-        # Create the target directory
-        mkdir -p models_saved/fi/fixed
-        
-        # Download the model file using huggingface_hub
         python -c "
         from huggingface_hub import hf_hub_download
-        hf_hub_download(
-            repo_id='P2SAMAPA/p2-etf-rough-path-forecaster-results',
-            filename='fi/fixed/model.pkl',
-            local_dir='./',
-            local_dir_use_symlinks=False
-        )
+
+        repo_id = 'P2SAMAPA/p2-etf-rough-path-forecaster-results'
+        files = ['fi/fixed/model.pkl', 'equity/fixed/model.pkl']
+
+        for f in files:
+            try:
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=f,
+                    local_dir='./',
+                    local_dir_use_symlinks=False
+                )
+                print(f'Successfully downloaded {f}')
+            except Exception as e:
+                print(f'Warning: Could not download {f}. It may not exist yet.')
+                print(f'Error details: {e}')
         "
       env:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
