@@ -34,17 +34,20 @@ class TestSignatureComputer(unittest.TestCase):
 
 
 class TestKernelEngine(unittest.TestCase):
-    def test_neumann_kernel(self):
-        from signature_core import NeumannSignatureKernel
+    def test_signature_kernel(self):
+        from signature_core import SignatureKernel
         
-        kernel = NeumannSignatureKernel(depth=2, tile_size=10)
+        # Updated to use the mathematically sound SignatureKernel
+        kernel = SignatureKernel(depth=2)
         path1 = np.random.randn(20, 3)
         path2 = np.random.randn(20, 3)
         
-        # Should compute without errors
-        result = kernel._neumann_expansion(path1, path2)
+        # kernel_vector computes the kernel between path1 and a list of reference paths
+        result = kernel.kernel_vector(path1, [path2])
         
-        self.assertIsInstance(result, float)
+        self.assertIsInstance(result, np.ndarray)
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], (float, np.floating))
 
 
 class TestETFSelector(unittest.TestCase):
