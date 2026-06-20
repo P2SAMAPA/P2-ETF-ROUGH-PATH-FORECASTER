@@ -7,6 +7,7 @@ Usage: python predict.py --module [fi|equity]
 import argparse
 import pickle
 import os
+import json
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -14,7 +15,8 @@ from datetime import datetime
 from data_pipeline import DataPipeline
 from utils import Logger, Timer, GitHubActionsHelpers
 
-# MUST match the PATH_WINDOW used in module_fi.py and module_equity.py
+# CRITICAL: Must strictly match the PATH_WINDOW used in module_fi.py and module_equity.py
+# Signature geometry breaks if inference paths are a different length than training paths.
 PREDICT_PATH_WINDOW = 21 
 
 
@@ -23,6 +25,7 @@ def load_latest_model(module, mode='fixed'):
     if mode == 'fixed':
         model_path = f"models_saved/{module}/fixed/model.pkl"
     else:
+        # For shrinking, load the consensus model (use most recent window)
         model_path = f"models_saved/{module}/shrinking/model_window_2024.pkl"
     
     if os.path.exists(model_path):
@@ -30,49 +33,35 @@ def load_latest_model(module, mode='fixed'):
             data = pickle.load(f)
         
         # CRITICAL FIX: Handle both direct model saves and dict-wrapped saves
+        # (train_shrinking.py saves {'model': model, 'scaler': None})
         if isinstance(data, dict):
             return data.get('model')
         return data
     return None
 
 
-def get_latest_path_data(module, lookback_days=PREDICT_PATH_WINDOW):
-    """Get the most recent lookback_days of path data"""
+def get_latest_path_data(module):
+    """
+    Get the most recent path data for inference.
+    Returns a list containing a single 2D path array, and a dict of current macro values.
+    """
     pipeline = DataPipeline(module=module)
-    pipeline.load_data()
     
-    # Get recent macro data
-    macro_data = pipeline.extract_macro_data()
-    # CRITICAL FIX: Fetch exactly PREDICT_PATH_WINDOW days to match training shape
-    recent_macro = macro_data.tail(lookback_days)
+    # Fetches exactly PREDICT_PATH_WINDOW days of raw macro features
+    X_path, dates, macro_values = pipeline.get_recent_features(window=PREDICT_PATH_WINDOW)
     
-    # Get recent ETF returns
-    etf_returns = pipeline.extract_etf_returns()
-    recent_returns = etf_returns.tail(lookback_days)
-    
-    # Align
-    common_dates = recent_macro.index.intersection(recent_returns.index)
-    macro_aligned = recent_macro.loc[common_dates]
-    
-    # Ensure we have exactly the required window length
-    if len(macro_aligned) < lookback_days:
-        raise ValueError(f"Insufficient data: need {lookback_days} days, got {len(macro_aligned)}")
-
-    # Create path
-    X_path = pipeline.create_path_augmentation(macro_aligned)
-    
-    # CRITICAL FIX: Do NOT blindly reshape. 
-    # If the pipeline adds lead-lag, the time dimension is dynamically 2N-1.
-    # Just ensure it's a 2D numpy array (Time, Features), then wrap in a list.
-    X_path = np.array(X_path)
-    
-    return [X_path], macro_aligned.iloc[-1].to_dict()
+    # CRITICAL FIX: Do NOT reshape or add a batch dimension.
+    # The new models.py expects a LIST of 2D paths: [(Time, Features), ...]
+    # Wrapping it in a list natively handles the batch dimension without 
+    # destroying the temporal shape if data_pipeline applies Lead-Lag.
+    return [X_path], macro_values
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run daily predictions")
     parser.add_argument("--module", type=str, required=True, choices=['fi', 'equity'],
                         help="Module to predict: fi or equity")
+    # Removed --lookback argument to prevent users from accidentally breaking signature geometry
     args = parser.parse_args()
     
     logger = Logger(f"Predict-{args.module.upper()}")
@@ -87,8 +76,14 @@ def main():
                 GitHubActionsHelpers.set_failed(f"No model found for {args.module}")
             return
         
-        # Get latest data (strictly uses PREDICT_PATH_WINDOW now)
-        X_paths, macro_values = get_latest_path_data(args.module)
+        # Get latest data (strictly uses PREDICT_PATH_WINDOW)
+        try:
+            X_paths, macro_values = get_latest_path_data(args.module)
+        except ValueError as e:
+            logger.error(f"Data error: {e}")
+            if is_ci:
+                GitHubActionsHelpers.set_failed(str(e))
+            return
         
         # Predict
         predictions = model.predict(X_paths)
@@ -133,7 +128,6 @@ def main():
         # Save signal
         os.makedirs("outputs", exist_ok=True)
         signal_path = f"outputs/{args.module}_signal_{datetime.now().strftime('%Y%m%d')}.json"
-        import json
         with open(signal_path, 'w') as f:
             json.dump(signal, f, indent=2)
         
