@@ -19,32 +19,28 @@ class KernelRidgeForecaster:
         self.alpha = alpha
         self.kernel = kernel
         self.model = None
-        self.scaler_x = StandardScaler()
-        self.scaler_y = StandardScaler()
+        self.scaler_y = StandardScaler() # CRITICAL FIX: Keep Y-scaler, remove X-scaler (X is scaled in models.py)
         self.trained = False
         self.n_outputs = None
     
     def fit(self, X_signatures, y_returns):
         """
         Fit Kernel Ridge model for multi-output
-        X_signatures: list of signature vectors
+        X_signatures: 2D array (already scaled by models.py)
         y_returns: (n_samples, n_etfs) - target returns
         """
-        X = np.vstack(X_signatures)
+        X = np.asarray(X_signatures) # Handles both lists and 2D arrays gracefully
         y = np.array(y_returns)
         
         self.n_outputs = y.shape[1] if len(y.shape) > 1 else 1
         
-        # Scale features
-        X_scaled = self.scaler_x.fit_transform(X)
-        
-        # Scale targets (each ETF separately)
+        # Scale targets (each ETF separately) to balance multi-output loss
         y_scaled = self.scaler_y.fit_transform(y)
         
         # Use MultiOutputRegressor for multi-output
         base_model = KernelRidge(alpha=self.alpha, kernel=self.kernel)
         self.model = MultiOutputRegressor(base_model)
-        self.model.fit(X_scaled, y_scaled)
+        self.model.fit(X, y_scaled) # Fit directly on X (no double scaling)
         
         self.trained = True
         return self
@@ -57,10 +53,8 @@ class KernelRidgeForecaster:
         if not self.trained:
             raise ValueError("Model not trained yet. Call fit() first.")
         
-        X = np.vstack(X_signatures)
-        X_scaled = self.scaler_x.transform(X)
-        
-        y_scaled = self.model.predict(X_scaled)
+        X = np.asarray(X_signatures) # Handles both lists and 2D arrays gracefully
+        y_scaled = self.model.predict(X) # Predict directly on X (no double scaling)
         y = self.scaler_y.inverse_transform(y_scaled)
         
         return np.array(y, dtype=np.float64)
