@@ -3,7 +3,8 @@ Model registry and ensemble forecaster for ROUGH-PATH-FORECASTER
 """
 
 import numpy as np
-from signature_core import SignatureComputer, NeumannSignatureKernel, AdaptiveDepthSelector
+from sklearn.preprocessing import StandardScaler
+from signature_core import SignatureComputer, AdaptiveDepthSelector # Removed fake Neumann import
 from kernel_engine import KernelRidgeForecaster
 from log_ode import LogODEForecaster, RoughPathEstimator
 
@@ -14,6 +15,7 @@ class SignatureModel:
     def __init__(self, depth=3):
         self.depth = depth
         self.sig_computer = SignatureComputer(depth=depth)
+        self.scaler = StandardScaler() # CRITICAL FIX: Added scaler for RBF kernel
         self.forecaster = KernelRidgeForecaster(depth=depth, alpha=0.1, kernel='rbf')
         self.trained = False
     
@@ -28,7 +30,13 @@ class SignatureModel:
             sig_vec = self.sig_computer.signature_vector(path)
             signatures.append(sig_vec)
         
-        self.forecaster.fit(signatures, y_returns)
+        signatures = np.array(signatures)
+        
+        # CRITICAL FIX: Scale signatures so depth-2 and depth-4 have equal variance.
+        # Without this, the RBF kernel breaks on higher depths.
+        signatures_scaled = self.scaler.fit_transform(signatures)
+        
+        self.forecaster.fit(signatures_scaled, y_returns)
         self.trained = True
         return self
     
@@ -41,8 +49,11 @@ class SignatureModel:
         for path in X_paths:
             sig_vec = self.sig_computer.signature_vector(path)
             signatures.append(sig_vec)
+            
+        signatures = np.array(signatures)
+        signatures_scaled = self.scaler.transform(signatures) # Apply same scaling
         
-        result = self.forecaster.predict(signatures)
+        result = self.forecaster.predict(signatures_scaled)
         
         # Ensure 2D output (n_samples, n_etfs)
         if len(result.shape) == 1:
