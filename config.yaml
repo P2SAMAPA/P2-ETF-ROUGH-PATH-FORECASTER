@@ -1,6 +1,6 @@
 engine:
   name: "ROUGH-PATH-FORECASTER"
-  version: "1.0.0"
+  version: "2.0.0"
   hf_results_repo: "P2SAMAPA/p2-etf-rough-path-forecaster-results"
   hf_source_repo: "P2SAMAPA/p2-etf-deepm-data"
   source_file: "data/master.parquet"
@@ -10,15 +10,12 @@ signature:
   lead_lag: true
   basepoint: true
   time_channel: true
-  truncation_tolerance: 1e-6
-  adaptive_depth_selection: true
+  # adaptive_depth_selection: true  # Disabled by default; Chen's iteration is so fast it's usually better to just use depth 3 or 4
 
 kernel:
-  type: "neumann_signature_kernel"
-  tile_size: 500
-  dynamic_truncation_epsilon: 1e-6
-  cache_ttl_seconds: 86400
-  parallel_tiles: 2
+  type: "signature_kernel" # CRITICAL FIX: Changed from neumann_signature_kernel
+  # tile_size, dynamic_truncation, and parallel_tiles removed 
+  # (Fake tiling replaced by mathematically sound linear kernel in signature_core.py)
 
 log_ode:
   solver: "dopri5"
