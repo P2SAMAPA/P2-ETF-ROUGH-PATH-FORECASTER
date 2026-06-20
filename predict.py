@@ -11,8 +11,11 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-from data_pipeline import DataPipeline, get_latest_macro_pipeline
+from data_pipeline import DataPipeline
 from utils import Logger, Timer, GitHubActionsHelpers
+
+# MUST match the PATH_WINDOW used in module_fi.py and module_equity.py
+PREDICT_PATH_WINDOW = 21 
 
 
 def load_latest_model(module, mode='fixed'):
@@ -20,22 +23,27 @@ def load_latest_model(module, mode='fixed'):
     if mode == 'fixed':
         model_path = f"models_saved/{module}/fixed/model.pkl"
     else:
-        # For shrinking, load the consensus model (use most recent window)
         model_path = f"models_saved/{module}/shrinking/model_window_2024.pkl"
     
     if os.path.exists(model_path):
         with open(model_path, 'rb') as f:
-            return pickle.load(f)
+            data = pickle.load(f)
+        
+        # CRITICAL FIX: Handle both direct model saves and dict-wrapped saves
+        if isinstance(data, dict):
+            return data.get('model')
+        return data
     return None
 
 
-def get_latest_path_data(module, lookback_days=30):
+def get_latest_path_data(module, lookback_days=PREDICT_PATH_WINDOW):
     """Get the most recent lookback_days of path data"""
     pipeline = DataPipeline(module=module)
     pipeline.load_data()
     
     # Get recent macro data
     macro_data = pipeline.extract_macro_data()
+    # CRITICAL FIX: Fetch exactly PREDICT_PATH_WINDOW days to match training shape
     recent_macro = macro_data.tail(lookback_days)
     
     # Get recent ETF returns
@@ -46,21 +54,25 @@ def get_latest_path_data(module, lookback_days=30):
     common_dates = recent_macro.index.intersection(recent_returns.index)
     macro_aligned = recent_macro.loc[common_dates]
     
+    # Ensure we have exactly the required window length
+    if len(macro_aligned) < lookback_days:
+        raise ValueError(f"Insufficient data: need {lookback_days} days, got {len(macro_aligned)}")
+
     # Create path
     X_path = pipeline.create_path_augmentation(macro_aligned)
     
-    # Reshape for model (add batch dimension)
-    X_path = X_path.reshape(1, -1, X_path.shape[1])
+    # CRITICAL FIX: Do NOT blindly reshape. 
+    # If the pipeline adds lead-lag, the time dimension is dynamically 2N-1.
+    # Just ensure it's a 2D numpy array (Time, Features), then wrap in a list.
+    X_path = np.array(X_path)
     
-    return X_path, macro_aligned.iloc[-1].to_dict()
+    return [X_path], macro_aligned.iloc[-1].to_dict()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run daily predictions")
     parser.add_argument("--module", type=str, required=True, choices=['fi', 'equity'],
                         help="Module to predict: fi or equity")
-    parser.add_argument("--lookback", type=int, default=30,
-                        help="Lookback days for path construction")
     args = parser.parse_args()
     
     logger = Logger(f"Predict-{args.module.upper()}")
@@ -75,11 +87,11 @@ def main():
                 GitHubActionsHelpers.set_failed(f"No model found for {args.module}")
             return
         
-        # Get latest data
-        X_path, macro_values = get_latest_path_data(args.module, args.lookback)
+        # Get latest data (strictly uses PREDICT_PATH_WINDOW now)
+        X_paths, macro_values = get_latest_path_data(args.module)
         
         # Predict
-        predictions = model.predict(X_path)
+        predictions = model.predict(X_paths)
         
         # Get per-ETF predictions
         if len(predictions.shape) > 1:
@@ -114,7 +126,7 @@ def main():
             macro_regime=regime,
             roughness_info={},
             signature_depth=3,
-            lookback_days=args.lookback,
+            lookback_days=PREDICT_PATH_WINDOW,
             model_type="Ensemble"
         )
         
