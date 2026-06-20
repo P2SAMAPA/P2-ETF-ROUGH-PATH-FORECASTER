@@ -61,7 +61,6 @@ def main():
     parser = argparse.ArgumentParser(description="Run daily predictions")
     parser.add_argument("--module", type=str, required=True, choices=['fi', 'equity'],
                         help="Module to predict: fi or equity")
-    # Removed --lookback argument to prevent users from accidentally breaking signature geometry
     args = parser.parse_args()
     
     logger = Logger(f"Predict-{args.module.upper()}")
@@ -71,9 +70,8 @@ def main():
         # Load model
         model = load_latest_model(args.module, mode='fixed')
         if model is None:
-            logger.error(f"No model found for {args.module}")
-            if is_ci:
-                GitHubActionsHelpers.set_failed(f"No model found for {args.module}")
+            logger.warning(f"No model found for {args.module}. Skipping prediction.")
+            # Do NOT call set_failed. Missing model is a valid state before training runs.
             return
         
         # Get latest data (strictly uses PREDICT_PATH_WINDOW)
