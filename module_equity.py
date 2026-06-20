@@ -1,22 +1,16 @@
 """
 Equity Module for ROUGH-PATH-FORECASTER
 
-FIXES applied here:
-  Bug 2 — StandardScaler is now fit on X_train only and used to transform
-           X_test, removing future data leakage.
-  Bug 3 — n_days now reflects the actual test window length for each
-           start_year (which grows shorter as start_year increases),
-           rather than always being a fixed 252.
-  Bug 4 — ann_return_pct, sharpe, max_drawdown_pct, and hit_rate_pct are
-           computed from the model's predicted best-ticker strategy returns
-           (i.e. each day: hold whichever ticker the model ranked highest),
-           not the naïve average return across all tickers in the universe.
+v2.0 FIXES:
+  - Removed pre-signature StandardScaler (was destroying polynomial path properties).
+  - Converted flat 2D feature matrices into proper rolling 3D paths for the Signature computer.
+  - Signature scaling is now correctly handled inside models.py post-computation.
+  - Maintains previous fixes: no future leakage, correct test window sizing, strategy metrics.
 """
 
 import numpy as np
 import pandas as pd
 import traceback
-from sklearn.preprocessing import StandardScaler
 
 from constants import EQUITY_TICKERS, EQUITY_BENCHMARK
 from data_pipeline import DataPipeline
@@ -24,6 +18,21 @@ from models import EnsembleForecaster
 from selection import ETFSelector, MacroRegimeContext
 from outputs import SignalGenerator, BenchmarkComparator
 from utils import Logger, Timer
+
+
+# Configuration for path construction
+PATH_WINDOW = 21  # Number of days to look back to form a single path
+
+
+def _reshape_to_paths(X_2d, y_2d, window=PATH_WINDOW):
+    """
+    Convert a flat 2D feature matrix (n_days, n_features) into a list of 
+    3D paths (n_paths, window, n_features) for the Signature computer.
+    Aligns targets to the end of each path.
+    """
+    paths = [X_2d[i - window:i] for i in range(window, len(X_2d))]
+    y_aligned = y_2d[window:]
+    return paths, y_aligned
 
 
 class EquityModule:
@@ -58,15 +67,10 @@ class EquityModule:
                     timer.__exit__(None, None, None)
                     continue
 
-                # ── Bug 3 fix: use 20 % of THIS window as test set ────────
-                # This makes n_days vary across windows (shrinking properly).
-                # A fixed 252-day holdout caused every window to report
-                # n_days=252 because Bug 1 made all windows the same length.
                 n_total    = len(dates)
                 train_size = int(n_total * 0.80)
-                test_size  = n_total - train_size   # ~20 % of the window
 
-                if test_size < 21:                  # need at least ~1 month
+                if (n_total - train_size) < 21:
                     self.logger.warning(
                         f"Window {start_year} too short ({n_total} days), skipping"
                     )
@@ -79,25 +83,21 @@ class EquityModule:
                 y_test      = y[train_size:].copy()
                 test_dates  = dates[train_size:].copy()
 
-                # ── Bug 2 fix: fit scaler on TRAIN only ───────────────────
-                scaler  = StandardScaler()
-                X_train = scaler.fit_transform(X_train_raw)
-                X_test  = scaler.transform(X_test_raw)
+                # CRITICAL FIX: Convert 2D features to 3D paths
+                X_train_paths, y_train = _reshape_to_paths(X_train_raw, y_train)
+                X_test_paths, y_test = _reshape_to_paths(X_test_raw, y_test)
 
                 self.logger.info(
-                    f"Window {start_year}: train={len(X_train)}, "
-                    f"test={len(X_test)}"
+                    f"Window {start_year}: train_paths={len(X_train_paths)}, "
+                    f"test_paths={len(X_test_paths)}"
                 )
 
-                # ── Train model ───────────────────────────────────────────
+                # Train model (Scaling is handled internally in models.py)
                 model = EnsembleForecaster(depths=[2, 3, 4])
-                model.fit(X_train, y_train)
-                preds = model.predict(X_test).copy()
+                model.fit(X_train_paths, y_train)
+                preds = model.predict(X_test_paths).copy()
 
-                # ── Bug 4 fix: compute metrics on strategy returns ─────────
-                # Each day: hold the ticker the model assigns the highest
-                # predicted return to.  This measures actual model alpha,
-                # not the dumb universe average.
+                # Compute metrics on strategy returns
                 strategy_returns = _compute_strategy_returns(preds, y_test)
 
                 ann_return = float(np.mean(strategy_returns) * 252)
@@ -111,7 +111,7 @@ class EquityModule:
                 hit_rate  = float(np.mean(strategy_returns > 0) * 100)
 
                 self.logger.info(
-                    f"Window {start_year}: Days={len(X_test)}, "
+                    f"Window {start_year}: Days={len(X_test_paths)}, "
                     f"AnnRet={ann_return*100:.2f}%, "
                     f"MaxDD={max_dd:.2f}%, Vol={ann_vol*100:.2f}%"
                 )
@@ -119,12 +119,11 @@ class EquityModule:
                 results.append({
                     'start_year':      start_year,
                     'end_year':        end_year,
-                    'n_days':          len(X_test),
+                    'n_days':          len(X_test_paths),
                     'model':           model,
-                    'scaler':          scaler,
                     'predictions':     preds,
                     'actuals':         y_test,
-                    'dates':           test_dates,
+                    'dates':           test_dates[PATH_WINDOW:], # Align dates
                     'ann_return_pct':  ann_return * 100,
                     'ann_vol_pct':     ann_vol    * 100,
                     'max_drawdown_pct': max_dd,
@@ -146,7 +145,7 @@ class EquityModule:
         return {'windows': results, 'models': models}
 
     # ------------------------------------------------------------------
-    # Fixed-dataset training (unchanged logic, scaler leak fixed too)
+    # Fixed-dataset training
     # ------------------------------------------------------------------
     def train_fixed(self):
         self.logger.info("Training Equity module on fixed dataset")
@@ -167,18 +166,20 @@ class EquityModule:
             X_test_raw  = X_raw[train_size + val_size:]
             y_test      = y[train_size + val_size:]
 
-            # Fit scaler on train only
-            scaler      = StandardScaler()
-            X_train     = scaler.fit_transform(X_train_raw)
-            X_val       = scaler.transform(X_val_raw)
-            X_test      = scaler.transform(X_test_raw)
+            # CRITICAL FIX: Convert 2D features to 3D paths
+            X_train_paths, y_train = _reshape_to_paths(X_train_raw, y_train)
+            X_val_paths, y_val = _reshape_to_paths(X_val_raw, y_val)
+            X_test_paths, y_test = _reshape_to_paths(X_test_raw, y_test)
 
-            model = EnsembleForecaster(depths=[2, 3, 4])
-            X_combined = np.vstack([X_train, X_val])
+            # Combine train and validation paths
+            X_combined_paths = X_train_paths + X_val_paths
             y_combined = np.vstack([y_train, y_val])
-            model.fit(X_combined, y_combined)
 
-            predictions  = model.predict(X_test)
+            # Train model (Scaling is handled internally in models.py)
+            model = EnsembleForecaster(depths=[2, 3, 4])
+            model.fit(X_combined_paths, y_combined)
+
+            predictions  = model.predict(X_test_paths)
             strat_ret    = _compute_strategy_returns(predictions, y_test)
             bench_ret    = y_test.mean(axis=1)
 
@@ -191,8 +192,9 @@ class EquityModule:
                 f"Fixed training complete in {timer.minutes:.2f} minutes"
             )
             return {
-                'model': model, 'scaler': scaler,
-                'predictions': predictions, 'y_test': y_test,
+                'model': model, 
+                'predictions': predictions, 
+                'y_test': y_test,
                 'metrics': metrics,
             }
 
